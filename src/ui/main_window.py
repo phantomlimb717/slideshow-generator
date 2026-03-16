@@ -199,6 +199,12 @@ class MainWindow(QMainWindow):
         btn_add_audio.clicked.connect(self.add_audio_dialog)
         audio_header.addWidget(btn_add_audio)
         audio_header.addStretch()
+        audio_header.addWidget(QLabel("Global Volume:"))
+        self.global_audio_slider = QSlider(Qt.Horizontal)
+        self.global_audio_slider.setRange(0, 100)
+        self.global_audio_slider.setValue(100)
+        self.global_audio_slider.valueChanged.connect(self.global_settings_changed)
+        audio_header.addWidget(self.global_audio_slider)
         center_layout.addLayout(audio_header)
 
         self.audio_list = ListWidgetDraggable()
@@ -473,7 +479,7 @@ class MainWindow(QMainWindow):
             self.schedule_preview_update()
 
     def add_audio_dialog(self):
-        files, _ = QFileDialog.getOpenFileNames(self, "Select Audio Files", "", "Audio Files (*.mp3 *.wav *.m4a *.aac)")
+        files, _ = QFileDialog.getOpenFileNames(self, "Select Audio Files", "", "Audio Files (*.mp3 *.wav *.m4a *.aac *.flac *.ogg)")
         for f in files:
             self.project.audio_tracks.append(AudioItem(file_path=f))
         self.refresh_audio_list()
@@ -540,10 +546,14 @@ class MainWindow(QMainWindow):
             self.focal_y.setValue(slide.focal_point[1])
             self.duration_spin.setValue(slide.duration)
 
-            self.crossfade_override.setEnabled(True)
             if slide.transition_duration is None:
-                self.crossfade_override.setValue(0.0)
+                self.cb_crossfade_global.setChecked(True)
+                self.crossfade_override.setEnabled(False)
+                # Display current global just for context but disable editing
+                self.crossfade_override.setValue(self.project.global_transition_duration)
             else:
+                self.cb_crossfade_global.setChecked(False)
+                self.crossfade_override.setEnabled(True)
                 self.crossfade_override.setValue(slide.transition_duration)
 
             # Live photo logic
@@ -580,10 +590,12 @@ class MainWindow(QMainWindow):
         slide.focal_point = (self.focal_x.value(), self.focal_y.value())
         slide.duration = self.duration_spin.value()
 
-        if self.crossfade_override.value() == 0.0:
+        if self.cb_crossfade_global.isChecked():
             slide.transition_duration = None
+            self.crossfade_override.setEnabled(False)
         else:
             slide.transition_duration = self.crossfade_override.value()
+            self.crossfade_override.setEnabled(True)
 
         if slide.media_type == MediaType.LIVE_PHOTO:
             slide.use_video_clip = self.cb_use_video.isChecked()
