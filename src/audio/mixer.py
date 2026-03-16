@@ -1,4 +1,5 @@
 import os
+import math
 from typing import Optional
 from pydub import AudioSegment
 from models.project import Project, SlideItem, MediaType
@@ -32,7 +33,6 @@ def build_audio_mix(project: Project, output_path: str) -> Optional[str]:
             # Convert percentage 0-1.0 to dB change. Pydub uses dB (10 * log10(linear_gain))
             # 1.0 = 0dB change. 0.5 = -6dB. 0.0 = -inf (silence)
             vol = max(0.01, project.backing_track_volume) # avoid log(0)
-            import math
             db_change = 20 * math.log10(vol)
             backing_track = backing_track + db_change
 

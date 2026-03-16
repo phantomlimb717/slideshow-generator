@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "family-memories-slideshow-generator"
+version = "0.1.0"
+description = "A desktop application for generating media slideshows."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "PySide6",
+    "Pillow",
+    "pillow-heif",
+    "pydub",
+    "ffmpeg-python",
+    "opencv-python",
+    "numpy"
+]
+
+[project.scripts]
+fms-generator = "src.main:main"

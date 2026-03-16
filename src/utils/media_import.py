@@ -33,7 +33,8 @@ def scan_directory_for_media(directory: str) -> List[SlideItem]:
     img_exts = {'.jpg', '.jpeg', '.png', '.tiff', '.bmp', '.webp', '.heic', '.heif'}
     vid_exts = {'.mp4', '.mov', '.avi', '.mkv'}
 
-    all_files = list(path.iterdir())
+    # Sort files alphabetically (case-insensitive) for deterministic import order
+    all_files = sorted(list(path.iterdir()), key=lambda x: x.name.lower())
 
     slides = []
     processed_bases = set()

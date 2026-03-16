@@ -1,7 +1,8 @@
 import cv2
 import numpy as np
 import ffmpeg
-from typing import List, Tuple, Optional, Generator
+from typing import List, Tuple, Optional, Generator, Iterator
+from collections import deque
 from PIL import Image, ImageOps
 from models.project import Project, SlideItem, EffectPreset, MediaType
 
@@ -36,53 +37,68 @@ class SlideshowRenderer:
             # Return black frame on error
             return np.zeros((self.height, self.width, 3), dtype=np.uint8)
 
-    def _get_video_frames(self, path: str, start_time: float, duration: float) -> List[np.ndarray]:
-        """Extracts frames from a video clip."""
-        frames = []
+    def _get_video_frames(self, path: str, start_time: float, duration: float) -> Generator[np.ndarray, None, None]:
+        """Extracts frames from a video clip sequentially."""
+        width, height = self.resolution
+        req_frames = int(duration * self.fps)
+        frames_yielded = 0
+
         try:
             # First use ffprobe to get native video dimensions and orientation
             probe = ffmpeg.probe(path)
             video_stream = next((s for s in probe['streams'] if s['codec_type'] == 'video'), None)
-            width = int(video_stream['width'])
-            height = int(video_stream['height'])
 
-            # Check for rotation in metadata (ffmpeg automatically rotates video, so we must swap dimensions if rotated 90 or 270 degrees)
-            tags = video_stream.get('tags', {})
-            rotate = tags.get('rotate', '0')
-            side_data = video_stream.get('side_data_list', [])
-            for sd in side_data:
-                if 'rotation' in sd:
-                    rotate = str(abs(int(sd['rotation'])))
+            if video_stream is not None:
+                width = int(video_stream['width'])
+                height = int(video_stream['height'])
 
-            if rotate in ['90', '270', '-90']:
-                width, height = height, width
+                # Check for rotation in metadata
+                tags = video_stream.get('tags', {})
+                rotate = tags.get('rotate', '0')
+                side_data = video_stream.get('side_data_list', [])
+                for sd in side_data:
+                    if 'rotation' in sd:
+                        rotate = str(abs(int(sd['rotation'])))
 
-            # We add a buffer to ensure we get enough frames
-            out, _ = (
+                if rotate in ['90', '270', '-90']:
+                    width, height = height, width
+
+            # Create an ffmpeg process to read frames sequentially
+            process = (
                 ffmpeg
                 .input(path, ss=start_time, t=duration + 0.5)
                 .output('pipe:', format='rawvideo', pix_fmt='rgb24', r=self.fps)
-                .run(capture_stdout=True, capture_stderr=True)
+                .run_async(pipe_stdout=True, pipe_stderr=True)
             )
 
-            # Reconstruct numpy array
-            video = np.frombuffer(out, np.uint8).reshape([-1, height, width, 3])
+            frame_size = width * height * 3
 
-            # Limit to required frames
-            num_frames = int(duration * self.fps)
-            frames = list(video[:num_frames])
+            while frames_yielded < req_frames:
+                in_bytes = process.stdout.read(frame_size)
+                if not in_bytes:
+                    break
+
+                frame = np.frombuffer(in_bytes, np.uint8).reshape([height, width, 3])
+                yield frame
+                frames_yielded += 1
 
         except ffmpeg.Error as e:
-            print(f"Error decoding video {path}: {e.stderr.decode()}")
+            err_msg = e.stderr.decode() if e.stderr else str(e)
+            print(f"Error decoding video {path}: {err_msg}")
         except Exception as e:
              print(f"Error decoding video {path}: {e}")
+        finally:
+            if 'process' in locals():
+                try:
+                    process.stdout.close()
+                    process.wait()
+                except Exception:
+                    pass
 
         # Pad with black frames if needed
-        req_frames = int(duration * self.fps)
-        while len(frames) < req_frames:
-            frames.append(np.zeros((self.resolution[1], self.resolution[0], 3), dtype=np.uint8))
-
-        return frames
+        while frames_yielded < req_frames:
+            yield np.zeros((self.resolution[1], self.resolution[0], 3), dtype=np.uint8)
+            frames_yielded += 1
 
     def _crop_to_aspect(self, img: np.ndarray, focal_x: float, focal_y: float) -> np.ndarray:
         """Crops an image to the target 16:9 aspect ratio based on focal point."""
@@ -183,10 +199,9 @@ class SlideshowRenderer:
         resized = cv2.resize(cropped, self.resolution, interpolation=cv2.INTER_LANCZOS4)
         return resized
 
-    def generate_slide_frames(self, slide: SlideItem) -> List[np.ndarray]:
-        """Generates all fully rendered frames for a single slide."""
+    def generate_slide_frames(self, slide: SlideItem) -> Generator[np.ndarray, None, None]:
+        """Generates all fully rendered frames for a single slide sequentially."""
         num_frames = int(slide.duration * self.fps)
-        frames = []
 
         media_path = slide.video_path if (slide.media_type == MediaType.LIVE_PHOTO and slide.use_video_clip) else slide.media_path
 
@@ -195,9 +210,10 @@ class SlideshowRenderer:
         if is_video:
             # Video handling
             trim_in = slide.trim_in
-            raw_frames = self._get_video_frames(media_path, trim_in, slide.duration)
+            frame_gen = self._get_video_frames(media_path, trim_in, slide.duration)
 
-            for i, frame in enumerate(raw_frames):
+            yielded_frames = 0
+            for i, frame in enumerate(frame_gen):
                 if i >= num_frames:
                     break
                 # Apply crop to aspect and ken burns (even to video if desired, though usually static)
@@ -205,12 +221,13 @@ class SlideshowRenderer:
                 cropped = self._crop_to_aspect(frame, slide.focal_point[0], slide.focal_point[1])
                 progress = i / max(1, num_frames - 1)
                 final_frame = self._apply_ken_burns(cropped, progress, slide)
-                frames.append(final_frame)
+                yield final_frame
+                yielded_frames += 1
 
             # Do NOT pad if short - cap the duration instead
-            if len(frames) < num_frames:
+            if yielded_frames < num_frames:
                 # Update duration to actual length so timing doesn't get messed up later
-                slide.duration = len(frames) / self.fps
+                slide.duration = yielded_frames / self.fps
         else:
             # Image handling
             raw_img = self._get_image_data(media_path)
@@ -219,9 +236,7 @@ class SlideshowRenderer:
             for i in range(num_frames):
                 progress = i / max(1, num_frames - 1)
                 final_frame = self._apply_ken_burns(cropped, progress, slide)
-                frames.append(final_frame)
-
-        return frames
+                yield final_frame
 
     def render_project(self) -> Generator[Tuple[int, int, np.ndarray], None, None]:
         """
@@ -237,55 +252,83 @@ class SlideshowRenderer:
         current_frame_idx = 0
 
         # Buffer for the previous slide's trailing frames (for crossfade)
-        prev_slide_tail = []
+        prev_slide_tail = deque()
 
         for i, slide in enumerate(self.project.slides):
-            slide_frames = self.generate_slide_frames(slide)
+            slide_frame_gen = self.generate_slide_frames(slide)
 
+            # Determine incoming transition frames count
+            trans_frames_count = 0
             if i > 0:
                 trans_dur = slide.transition_duration if slide.transition_duration is not None else self.project.global_transition_duration
                 trans_frames_count = int(trans_dur * self.fps)
 
-                # Ensure we don't fade longer than the slide itself
-                trans_frames_count = min(trans_frames_count, len(slide_frames), len(prev_slide_tail))
+            # Make sure we don't request more transition frames than exist in the tail
+            trans_frames_count = min(trans_frames_count, len(prev_slide_tail))
 
-                # Do crossfade
-                for j in range(trans_frames_count):
-                    alpha = (j + 1) / (trans_frames_count + 1)
-
-                    frame1 = prev_slide_tail[j]
-                    frame2 = slide_frames[j]
-
-                    # Blend
-                    blended = cv2.addWeighted(frame1, 1 - alpha, frame2, alpha, 0)
-                    yield current_frame_idx, total_frames, blended
-                    current_frame_idx += 1
-            else:
-                # First slide, no crossfade in
-                trans_frames_count = 0
-
-            # Prepare tail for next slide transition
+            # Determine outgoing transition frames count
+            next_trans_frames_count = 0
             if i < len(self.project.slides) - 1:
                 next_slide = self.project.slides[i+1]
                 next_trans_dur = next_slide.transition_duration if next_slide.transition_duration is not None else self.project.global_transition_duration
                 next_trans_frames_count = int(next_trans_dur * self.fps)
 
-                # Cannot crossfade longer than this slide's *remaining* length
-                remaining_frames = len(slide_frames) - trans_frames_count
-                next_trans_frames_count = min(next_trans_frames_count, remaining_frames)
+            # To avoid loading all frames, we still need to stream.
+            # However, we don't know the exact length of the stream if it's a short video.
+            # We can use a rolling buffer approach if needed, or pre-calculate duration.
+            # But the requirement is to keep memory low, so we should NOT use `list(slide_frame_gen)`.
 
-                # The remainder of the current slide before the next crossfade starts
-                output_frames = slide_frames[trans_frames_count:-next_trans_frames_count] if next_trans_frames_count > 0 else slide_frames[trans_frames_count:]
+            # We will use a queue/deque for outgoing tail, and we just iterate through frame_gen.
+            # Since we must apply crossfade to the *first* trans_frames_count frames, we can do that directly.
 
-                # Yield the middle portion of the slide
-                for frame in output_frames:
+            frames_yielded_this_slide = 0
+            # Buffer for frames that might be part of the *next* transition
+            # If we don't know the end, we just keep the last `next_trans_frames_count` frames
+            new_tail = deque(maxlen=next_trans_frames_count)
+
+            for frame in slide_frame_gen:
+                if frames_yielded_this_slide < trans_frames_count:
+                    # We are in the crossfade region with the previous slide
+                    alpha = (frames_yielded_this_slide + 1) / (trans_frames_count + 1)
+                    frame1 = prev_slide_tail[frames_yielded_this_slide]
+                    frame2 = frame
+                    blended = cv2.addWeighted(frame1, 1 - alpha, frame2, alpha, 0)
+                    yield current_frame_idx, total_frames, blended
+                    current_frame_idx += 1
+                else:
+                    # We are past the incoming crossfade.
+                    # This frame might be middle frame or outgoing tail.
+                    # We only yield frames that are pushed out of the tail deque.
+                    if next_trans_frames_count == 0:
+                        # No outgoing transition, yield immediately
+                        yield current_frame_idx, total_frames, frame
+                        current_frame_idx += 1
+                    else:
+                        # Push to tail deque. If it's full, the oldest frame is pushed out and we yield it.
+                        if len(new_tail) == next_trans_frames_count:
+                            oldest_frame = new_tail[0]
+                            yield current_frame_idx, total_frames, oldest_frame
+                            current_frame_idx += 1
+                        new_tail.append(frame)
+
+                frames_yielded_this_slide += 1
+
+            # If this is the last slide, we must also yield whatever is left in the tail,
+            # because there will be no next slide to crossfade with.
+            if i == len(self.project.slides) - 1:
+                for frame in new_tail:
                     yield current_frame_idx, total_frames, frame
                     current_frame_idx += 1
-
-                # Save the tail for the next crossfade
-                prev_slide_tail = slide_frames[-next_trans_frames_count:] if next_trans_frames_count > 0 else []
             else:
-                # Last slide, output everything remaining
-                for frame in slide_frames[trans_frames_count:]:
-                    yield current_frame_idx, total_frames, frame
-                    current_frame_idx += 1
+                # If the slide was shorter than expected (e.g. short video) and we didn't fill the tail,
+                # we must yield out frames until the tail has exactly next_trans_frames_count frames.
+                # However, new_tail is a deque with maxlen=next_trans_frames_count.
+                # So if it's shorter, it means the entire non-crossfade portion of the slide
+                # is now in the tail. The next slide will crossfade with whatever is in the tail.
+                # But wait, next slide assumes prev_slide_tail has `next_trans_frames_count` items.
+                # Let's make sure it's correct. We just update prev_slide_tail to be a list
+                # of whatever actually ended up in new_tail.
+                pass
+
+            # Update the tail for the next slide
+            prev_slide_tail = list(new_tail)

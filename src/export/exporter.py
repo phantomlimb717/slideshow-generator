@@ -21,7 +21,8 @@ class Exporter(QObject):
         self.quality = quality
         self._cancel = False
         self._thread = None
-        self.temp_dir = tempfile.mkdtemp(prefix="fms_export_")
+        self.temp_dir_obj = tempfile.TemporaryDirectory(prefix="fms_export_")
+        self.temp_dir = self.temp_dir_obj.name
 
     def cancel(self):
         self._cancel = True
@@ -99,3 +100,8 @@ class Exporter(QObject):
 
         except Exception as e:
             self.error_occurred.emit(str(e))
+        finally:
+            try:
+                self.temp_dir_obj.cleanup()
+            except Exception:
+                pass
