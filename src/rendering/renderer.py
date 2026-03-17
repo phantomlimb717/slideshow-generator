@@ -1,18 +1,15 @@
 import cv2
 import numpy as np
 import ffmpeg
+import math
 from typing import List, Tuple, Optional, Generator, Iterator
 from collections import deque
 from PIL import Image, ImageOps
 from models.project import Project, SlideItem, EffectPreset, MediaType
 
 def ease_in_out(t: float) -> float:
-    """Cubic ease-in-out function for smooth animations."""
-    if t < 0.5:
-        return 4 * t * t * t
-    else:
-        f = ((2 * t) - 2)
-        return 0.5 * f * f * f + 1
+    """Sine-based ease-in-out for smoother, more visible motion."""
+    return 0.5 * (1 - math.cos(math.pi * t))
 
 class SlideshowRenderer:
     def __init__(self, project: Project, fps: int = 30, resolution: Tuple[int, int] = (1920, 1080)):
@@ -155,21 +152,21 @@ class SlideshowRenderer:
             z2 = start_zoom
             ox1, oy1, ox2, oy2 = 0.5, 0.5, 0.5, 0.5
         elif effect == EffectPreset.PAN_LEFT_RIGHT:
-            z1, z2 = max(1.3, start_zoom), max(1.3, start_zoom)
-            ox1, oy1, ox2, oy2 = 0.25, 0.5, 0.75, 0.5
+            z1, z2 = max(1.5, start_zoom), max(1.5, start_zoom)
+            ox1, oy1, ox2, oy2 = 0.33, 0.5, 0.67, 0.5
         elif effect == EffectPreset.PAN_RIGHT_LEFT:
-            z1, z2 = max(1.3, start_zoom), max(1.3, start_zoom)
-            ox1, oy1, ox2, oy2 = 0.75, 0.5, 0.25, 0.5
+            z1, z2 = max(1.5, start_zoom), max(1.5, start_zoom)
+            ox1, oy1, ox2, oy2 = 0.67, 0.5, 0.33, 0.5
         elif effect == EffectPreset.PAN_UP:
-            z1, z2 = max(1.3, start_zoom), max(1.3, start_zoom)
-            ox1, oy1, ox2, oy2 = 0.5, 0.75, 0.5, 0.25
+            z1, z2 = max(1.5, start_zoom), max(1.5, start_zoom)
+            ox1, oy1, ox2, oy2 = 0.5, 0.67, 0.5, 0.33
         elif effect == EffectPreset.PAN_DOWN:
-            z1, z2 = max(1.3, start_zoom), max(1.3, start_zoom)
-            ox1, oy1, ox2, oy2 = 0.5, 0.25, 0.5, 0.75
+            z1, z2 = max(1.5, start_zoom), max(1.5, start_zoom)
+            ox1, oy1, ox2, oy2 = 0.5, 0.33, 0.5, 0.67
         elif effect == EffectPreset.ZOOM_IN_PAN:
             z1 = start_zoom
             z2 = start_zoom * 1.3
-            ox1, oy1, ox2, oy2 = 0.3, 0.3, 0.7, 0.7
+            ox1, oy1, ox2, oy2 = 0.35, 0.35, 0.65, 0.65
         else:
             z1, z2 = start_zoom, start_zoom
             ox1, oy1, ox2, oy2 = 0.5, 0.5, 0.5, 0.5
