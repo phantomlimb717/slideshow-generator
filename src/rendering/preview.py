@@ -81,20 +81,30 @@ class PreviewGenerator(QObject):
                 .run_async(pipe_stdin=True, quiet=True)
             )
 
-            for frame_idx, total_frames, frame_data in renderer.render_project():
-                if self._cancel:
+            try:
+                for frame_idx, total_frames, frame_data in renderer.render_project():
+                    if self._cancel:
+                        break
+
+                    process.stdin.write(frame_data.tobytes())
+
+                    # Update progress
+                    progress = int((frame_idx / max(1, total_frames)) * 100)
+                    self.progress_updated.emit(progress)
+            except (BrokenPipeError, OSError) as e:
+                stderr_output = ""
+                try:
+                    stderr_output = process.stderr.read().decode()
+                except Exception:
+                    pass
+                self.error_occurred.emit(f"FFmpeg encoding failed: {stderr_output or str(e)}")
+                return
+            finally:
+                try:
                     process.stdin.close()
                     process.wait()
-                    return
-
-                process.stdin.write(frame_data.tobytes())
-
-                # Update progress
-                progress = int((frame_idx / max(1, total_frames)) * 100)
-                self.progress_updated.emit(progress)
-
-            process.stdin.close()
-            process.wait()
+                except Exception:
+                    pass
 
             if self._cancel:
                 return

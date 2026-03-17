@@ -25,7 +25,7 @@ def check_dependencies():
         msg.exec()
         sys.exit(1)
 
-if __name__ == "__main__":
+def main():
     check_dependencies()
 
     app = QApplication(sys.argv)
@@ -35,3 +35,6 @@ if __name__ == "__main__":
     window.show()
 
     sys.exit(app.exec())
+
+if __name__ == "__main__":
+    main()
