@@ -225,9 +225,6 @@ class SlideshowRenderer:
                 yielded_frames += 1
 
             # Do NOT pad if short - cap the duration instead
-            if yielded_frames < num_frames:
-                # Update duration to actual length so timing doesn't get messed up later
-                slide.duration = yielded_frames / self.fps
         else:
             # Image handling
             raw_img = self._get_image_data(media_path)

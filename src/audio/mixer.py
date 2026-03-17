@@ -1,5 +1,6 @@
 import os
 import math
+import ffmpeg
 from typing import Optional
 from pydub import AudioSegment
 from models.project import Project, SlideItem, MediaType
@@ -54,10 +55,28 @@ def build_audio_mix(project: Project, output_path: str) -> Optional[str]:
     # 2. Mix in Video Audio
     current_time_ms = 0
     for i, slide in enumerate(project.slides):
-        slide_dur_ms = int(slide.duration * 1000)
-
-        # Check if it's a video/live photo with audio enabled
         is_video = slide.media_type == MediaType.VIDEO or (slide.media_type == MediaType.LIVE_PHOTO and slide.use_video_clip)
+        effective_duration = slide.duration
+
+        if is_video:
+            media_path = slide.video_path if slide.media_type == MediaType.LIVE_PHOTO else slide.media_path
+            try:
+                probe = ffmpeg.probe(media_path)
+                actual_clip_duration = None
+
+                if 'format' in probe and 'duration' in probe['format']:
+                    actual_clip_duration = float(probe['format']['duration'])
+                else:
+                    video_stream = next((s for s in probe['streams'] if s['codec_type'] == 'video'), None)
+                    if video_stream is not None and 'duration' in video_stream:
+                        actual_clip_duration = float(video_stream['duration'])
+
+                if actual_clip_duration is not None:
+                    effective_duration = min(slide.duration, max(0.0, actual_clip_duration - slide.trim_in))
+            except Exception as e:
+                print(f"Error probing video {media_path}: {e}")
+
+        slide_dur_ms = int(effective_duration * 1000)
 
         if is_video and slide.include_audio:
             media_path = slide.video_path if slide.media_type == MediaType.LIVE_PHOTO else slide.media_path
