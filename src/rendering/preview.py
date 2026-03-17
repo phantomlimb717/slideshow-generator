@@ -128,12 +128,20 @@ class PreviewGenerator(QObject):
                     process.stdin.close()
                 except Exception as e:
                     print(f"[{time.strftime('%H:%M:%S')}] [Preview] Error closing stdin: {e}")
+
+                # Drain stderr to prevent pipe buffer deadlock
+                stderr_output = ""
+                try:
+                    if process.stderr:
+                        stderr_output = process.stderr.read().decode()
+                except Exception:
+                    pass
+
                 print(f"[{time.strftime('%H:%M:%S')}] [Preview] Waiting for FFmpeg to finish...")
                 try:
-                    return_code = process.wait(timeout=30)
+                    return_code = process.wait(timeout=10)
                     print(f"[{time.strftime('%H:%M:%S')}] [Preview] FFmpeg exited with code {return_code}")
-                    if return_code != 0 and process.stderr:
-                        stderr_output = process.stderr.read().decode()
+                    if return_code != 0:
                         print(f"[{time.strftime('%H:%M:%S')}] [Preview] FFmpeg error: {stderr_output[-500:]}")
                 except subprocess.TimeoutExpired:
                     print(f"[{time.strftime('%H:%M:%S')}] [Preview] FFmpeg timed out, killing...")
