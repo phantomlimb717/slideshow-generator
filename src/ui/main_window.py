@@ -345,7 +345,7 @@ class MainWindow(QMainWindow):
         self.timeline_list = ListWidgetDraggable()
         self.timeline_list.setFlow(QListWidget.LeftToRight)
         self.timeline_list.setWrapping(False)
-        self.timeline_list.setMinimumHeight(150)
+        self.timeline_list.setFixedHeight(134)  # 124 grid height + ~10 for scrollbar
         self.timeline_list.setViewMode(QListWidget.ListMode)
         self.timeline_list.setDragDropMode(QListWidget.InternalMove)
         self.timeline_list.setDefaultDropAction(Qt.MoveAction)
