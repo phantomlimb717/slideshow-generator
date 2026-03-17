@@ -50,10 +50,11 @@ class Exporter(QObject):
             renderer = SlideshowRenderer(self.project, fps=self.fps, resolution=self.resolution)
 
             # Use ffmpeg-python to create a subprocess for writing frames
+            temp_video = os.path.join(self.temp_dir, "temp_video.mp4")
             process = (
                 ffmpeg
                 .input('pipe:', format='rawvideo', pix_fmt='rgb24', s=f'{self.resolution[0]}x{self.resolution[1]}', r=self.fps)
-                .output(self.output_path, pix_fmt='yuv420p', vcodec='libx264', crf=self.quality, preset='medium')
+                .output(temp_video, pix_fmt='yuv420p', vcodec='libx264', crf=self.quality, preset='medium')
                 .overwrite_output()
                 .run_async(pipe_stdin=True, quiet=True)
             )
@@ -67,7 +68,7 @@ class Exporter(QObject):
                 process.stdin.write(frame_data.tobytes())
 
                 # Update progress
-                progress = int((frame_idx / total_frames) * 100)
+                progress = int((frame_idx / max(1, total_frames)) * 100)
                 self.progress_updated.emit(progress)
 
             process.stdin.close()
@@ -77,11 +78,9 @@ class Exporter(QObject):
                 return
 
             # 3. Mux audio and video
+            final_path = self.output_path
             if os.path.exists(audio_path):
                 # Mix them
-                final_path = self.output_path
-                temp_video = os.path.join(self.temp_dir, "temp_video.mp4")
-                os.rename(final_path, temp_video)
                 try:
                     video_stream = ffmpeg.input(temp_video)
                     audio_stream = ffmpeg.input(audio_path)
@@ -95,6 +94,9 @@ class Exporter(QObject):
                     print(f"Muxing error: {e.stderr.decode()}")
                     self.error_occurred.emit("Failed to mix export audio and video.")
                     return
+            else:
+                import shutil
+                shutil.copy(temp_video, final_path)
 
             self.export_complete.emit(self.output_path)
 

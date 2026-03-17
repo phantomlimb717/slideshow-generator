@@ -720,6 +720,13 @@ class MainWindow(QMainWindow):
             self.exporter.cancel()
         self.export_dlg.reject()
 
+    def closeEvent(self, event):
+        """Clean up when application is closing."""
+        if self.preview_generator:
+            self.preview_generator.cancel()
+            self.preview_generator.cleanup()
+        event.accept()
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = MainWindow()
