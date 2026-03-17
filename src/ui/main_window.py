@@ -4,9 +4,10 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QToolBar, QSplitter, QLabel, QPushButton, QSlider, QComboBox,
     QSpinBox, QDoubleSpinBox, QCheckBox, QListWidget, QListWidgetItem,
-    QFrame, QFileDialog, QMessageBox, QProgressDialog, QSizePolicy
+    QFrame, QFileDialog, QMessageBox, QProgressDialog, QSizePolicy,
+    QStyledItemDelegate, QStyle
 )
-from PySide6.QtCore import Qt, QSize, QUrl, QTimer, Signal, QThread, QEvent
+from PySide6.QtCore import Qt, QSize, QUrl, QTimer, Signal, QThread, QEvent, QRect
 from PySide6.QtGui import QIcon, QAction, QPixmap, QImage, QPainter, QColor, QPalette
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtMultimediaWidgets import QVideoWidget
@@ -77,6 +78,52 @@ class ThumbnailWorker(QThread):
 
     def cancel(self):
         self._cancel = True
+
+class TimelineItemDelegate(QStyledItemDelegate):
+    """Custom delegate that renders timeline items as thumbnail cards with text below."""
+
+    ITEM_WIDTH = 160
+    ITEM_HEIGHT = 110
+    ICON_WIDTH = 140
+    ICON_HEIGHT = 80
+    TEXT_HEIGHT = 26
+    PADDING = 4
+
+    def paint(self, painter, option, index):
+        painter.save()
+
+        # Draw selection/hover background
+        if option.state & QStyle.State_Selected:
+            painter.fillRect(option.rect, QColor("#007acc"))
+        elif option.state & QStyle.State_MouseOver:
+            painter.fillRect(option.rect, QColor("#3f3f46"))
+
+        rect = option.rect
+
+        # Calculate icon position (centered horizontally, at the top)
+        icon = index.data(Qt.DecorationRole)
+        if icon:
+            icon_x = rect.x() + (rect.width() - self.ICON_WIDTH) // 2
+            icon_y = rect.y() + self.PADDING
+            icon_rect = QRect(icon_x, icon_y, self.ICON_WIDTH, self.ICON_HEIGHT)
+            icon.paint(painter, icon_rect)
+
+        # Draw text below the icon (centered)
+        text = index.data(Qt.DisplayRole)
+        if text:
+            text_rect = QRect(
+                rect.x() + self.PADDING,
+                rect.y() + self.PADDING + self.ICON_HEIGHT + 2,
+                rect.width() - 2 * self.PADDING,
+                self.TEXT_HEIGHT
+            )
+            painter.setPen(QColor("#cccccc"))
+            painter.drawText(text_rect, Qt.AlignHCenter | Qt.AlignTop, text)
+
+        painter.restore()
+
+    def sizeHint(self, option, index):
+        return QSize(self.ITEM_WIDTH, self.ITEM_HEIGHT)
 
 class ListWidgetDraggable(QListWidget):
     itemsDropped = Signal()
@@ -298,13 +345,12 @@ class MainWindow(QMainWindow):
         self.timeline_list = ListWidgetDraggable()
         self.timeline_list.setFlow(QListWidget.LeftToRight)
         self.timeline_list.setWrapping(False)
-        self.timeline_list.setMinimumHeight(120)
+        self.timeline_list.setMinimumHeight(140)
         self.timeline_list.setViewMode(QListWidget.ListMode)
         self.timeline_list.setDragDropMode(QListWidget.InternalMove)
         self.timeline_list.setDefaultDropAction(Qt.MoveAction)
         self.timeline_list.setIconSize(QSize(140, 80))
-        self.timeline_list.setGridSize(QSize(160, 110))
-        self.timeline_list.setUniformItemSizes(True)
+        self.timeline_list.setItemDelegate(TimelineItemDelegate(self.timeline_list))
         self.timeline_list.setSelectionMode(QListWidget.SingleSelection)
         self.timeline_list.setHorizontalScrollMode(QListWidget.ScrollPerPixel)
         self.timeline_list.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -338,8 +384,6 @@ class MainWindow(QMainWindow):
         self.audio_list.setViewMode(QListWidget.ListMode)
         self.audio_list.setDragDropMode(QListWidget.InternalMove)
         self.audio_list.setDefaultDropAction(Qt.MoveAction)
-        self.audio_list.setGridSize(QSize(160, 50))
-        self.audio_list.setUniformItemSizes(True)
         self.audio_list.setSelectionMode(QListWidget.SingleSelection)
         self.audio_list.setHorizontalScrollMode(QListWidget.ScrollPerPixel)
         self.audio_list.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
