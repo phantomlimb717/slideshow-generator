@@ -17,8 +17,22 @@ class PreviewGenerator(QObject):
         self.project = project
         self._cancel = False
         self._thread = None
-        self.temp_dir_obj = tempfile.TemporaryDirectory(prefix="fms_preview_")
-        self.temp_dir = self.temp_dir_obj.name
+        self.temp_dir_obj = None
+        self.temp_dir = None
+        self.prev_temp_dir_obj = None
+
+    def cleanup(self):
+        """Clean up current temp directory."""
+        if self.temp_dir_obj:
+            try:
+                self.temp_dir_obj.cleanup()
+            except Exception:
+                pass
+        if self.prev_temp_dir_obj:
+            try:
+                self.prev_temp_dir_obj.cleanup()
+            except Exception:
+                pass
 
     def cancel(self):
         self._cancel = True
@@ -30,6 +44,18 @@ class PreviewGenerator(QObject):
             self.cancel()
 
         self._cancel = False
+
+        # Clean up the previous temp dir before starting a new one
+        if self.prev_temp_dir_obj:
+            try:
+                self.prev_temp_dir_obj.cleanup()
+            except Exception:
+                pass
+
+        self.prev_temp_dir_obj = self.temp_dir_obj
+        self.temp_dir_obj = tempfile.TemporaryDirectory(prefix="fms_preview_")
+        self.temp_dir = self.temp_dir_obj.name
+
         self._thread = threading.Thread(target=self._run_generation)
         self._thread.start()
 
@@ -64,7 +90,7 @@ class PreviewGenerator(QObject):
                 process.stdin.write(frame_data.tobytes())
 
                 # Update progress
-                progress = int((frame_idx / total_frames) * 100)
+                progress = int((frame_idx / max(1, total_frames)) * 100)
                 self.progress_updated.emit(progress)
 
             process.stdin.close()
@@ -100,8 +126,9 @@ class PreviewGenerator(QObject):
         except Exception as e:
             self.error_occurred.emit(str(e))
         finally:
-            if self._cancel or hasattr(self, '_cleanup_on_cancel') and self._cleanup_on_cancel:
+            if self._cancel:
                 try:
                     self.temp_dir_obj.cleanup()
+                    self.temp_dir_obj = None
                 except Exception:
                     pass
