@@ -109,8 +109,12 @@ class MainWindow(QMainWindow):
         self.media_list.filesDropped.connect(self.handle_files_dropped)
         left_layout.addWidget(self.media_list)
 
-        btn_add_files = QPushButton("Add Folder / Files...")
-        btn_add_files.clicked.connect(self.add_media_dialog)
+        btn_add_folder = QPushButton("Add Folder...")
+        btn_add_folder.clicked.connect(self.add_media_dialog)
+        left_layout.addWidget(btn_add_folder)
+
+        btn_add_files = QPushButton("Add Files...")
+        btn_add_files.clicked.connect(self.add_files_dialog)
         left_layout.addWidget(btn_add_files)
 
         main_splitter.addWidget(left_panel)
@@ -205,6 +209,9 @@ class MainWindow(QMainWindow):
         self.global_audio_slider.setValue(100)
         self.global_audio_slider.valueChanged.connect(self.global_settings_changed)
         audio_header.addWidget(self.global_audio_slider)
+        self.global_audio_label = QLabel("100%")
+        self.global_audio_slider.valueChanged.connect(lambda v: self.global_audio_label.setText(f"{v}%"))
+        audio_header.addWidget(self.global_audio_label)
         center_layout.addLayout(audio_header)
 
         self.audio_list = ListWidgetDraggable()
@@ -270,12 +277,16 @@ class MainWindow(QMainWindow):
         slide_props_layout.addLayout(dur_layout)
 
         # Crossfade Override
+        self.cb_crossfade_global = QCheckBox("Use Global Default")
+        self.cb_crossfade_global.setChecked(True)
+        self.cb_crossfade_global.stateChanged.connect(self.inspector_changed)
+        slide_props_layout.addWidget(self.cb_crossfade_global)
+
         crossfade_layout = QHBoxLayout()
         crossfade_layout.addWidget(QLabel("Crossfade override (s):"))
         self.crossfade_override = QDoubleSpinBox()
         self.crossfade_override.setRange(0.0, 10.0)
         self.crossfade_override.setSingleStep(0.5)
-        self.crossfade_override.setSpecialValueText("Global Default")
         self.crossfade_override.setValue(0.0)
         self.crossfade_override.valueChanged.connect(self.inspector_changed)
         crossfade_layout.addWidget(self.crossfade_override)
@@ -331,13 +342,25 @@ class MainWindow(QMainWindow):
         toolbar = QToolBar("Main Toolbar")
         self.addToolBar(toolbar)
 
-        act_add = QAction("Add Folder", self)
+        act_add = QAction("Add Folder...", self)
         act_add.triggered.connect(self.add_media_dialog)
         toolbar.addAction(act_add)
+
+        act_add_files = QAction("Add Files...", self)
+        act_add_files.triggered.connect(self.add_files_dialog)
+        toolbar.addAction(act_add_files)
 
         act_rm = QAction("Remove Slide/Audio", self)
         act_rm.triggered.connect(self.remove_selected)
         toolbar.addAction(act_rm)
+
+        act_move_up = QAction("Move Up", self)
+        act_move_up.triggered.connect(self.move_slide_up)
+        toolbar.addAction(act_move_up)
+
+        act_move_down = QAction("Move Down", self)
+        act_move_down.triggered.connect(self.move_slide_down)
+        toolbar.addAction(act_move_down)
 
         toolbar.addSeparator()
 
@@ -373,22 +396,53 @@ class MainWindow(QMainWindow):
         if folder:
             self.handle_files_dropped([folder])
 
+    def add_files_dialog(self):
+        files, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Select Media Files",
+            "",
+            "Media Files (*.jpg *.jpeg *.png *.tiff *.bmp *.webp *.heic *.heif *.mp4 *.mov *.avi *.mkv)"
+        )
+        if files:
+            self.handle_files_dropped(files)
+
     def handle_files_dropped(self, paths):
         slides = []
         for path in paths:
             if os.path.isdir(path):
                 slides.extend(scan_directory_for_media(path))
             else:
-                # To simplify, we rely on the scan function if we want pairing logic.
-                # If they drop a single file, we could manually parse it, but let's just use the scanner on its dir
-                # and filter out.
                 pdir = os.path.dirname(path)
-                found = scan_directory_for_media(pdir)
-                for s in found:
-                    if s.media_path == path or s.video_path == path:
-                        # Avoid duplicates
-                        if not any(ls.media_path == s.media_path for ls in self.media_library):
-                            slides.append(s)
+                ext = os.path.splitext(path)[1].lower()
+                base_name = os.path.splitext(os.path.basename(path))[0]
+
+                # Check for Live Photo pairs
+                if ext in ['.heic', '.heif']:
+                    mov_path = os.path.join(pdir, base_name + '.mov')
+                    if not os.path.exists(mov_path):
+                        mov_path = os.path.join(pdir, base_name + '.MOV')
+
+                    if os.path.exists(mov_path):
+                        s = SlideItem(media_path=path, media_type=MediaType.LIVE_PHOTO, video_path=mov_path)
+                    else:
+                        s = SlideItem(media_path=path, media_type=MediaType.IMAGE)
+                elif ext in ['.mov', '.mp4']:
+                    # It might be the video half of a live photo, check for image
+                    heic_path = os.path.join(pdir, base_name + '.heic')
+                    if not os.path.exists(heic_path):
+                        heic_path = os.path.join(pdir, base_name + '.HEIC')
+
+                    if os.path.exists(heic_path):
+                        s = SlideItem(media_path=heic_path, media_type=MediaType.LIVE_PHOTO, video_path=path)
+                    else:
+                        s = SlideItem(media_path=path, media_type=MediaType.VIDEO)
+                elif ext in ['.jpg', '.jpeg', '.png', '.tiff', '.bmp', '.webp']:
+                    s = SlideItem(media_path=path, media_type=MediaType.IMAGE)
+                else:
+                    continue
+
+                if not any((ls.media_path == s.media_path and ls.video_path == s.video_path) for ls in self.media_library) and not any((ls.media_path == s.media_path and ls.video_path == s.video_path) for ls in slides):
+                    slides.append(s)
 
         self.media_library.extend(slides)
         self.refresh_media_list()
@@ -456,6 +510,46 @@ class MainWindow(QMainWindow):
             new_slides.append(item.data(Qt.UserRole))
         self.project.slides = new_slides
         self.schedule_preview_update()
+
+    def move_slide_up(self):
+        selected = self.timeline_list.selectedItems()
+        if not selected:
+            return
+
+        item = selected[0]
+        row = self.timeline_list.row(item)
+
+        if row > 0:
+            # Swap in model
+            self.project.slides[row], self.project.slides[row - 1] = self.project.slides[row - 1], self.project.slides[row]
+
+            # Swap in view
+            taken = self.timeline_list.takeItem(row)
+            self.timeline_list.insertItem(row - 1, taken)
+
+            # Reselect
+            taken.setSelected(True)
+            self.schedule_preview_update()
+
+    def move_slide_down(self):
+        selected = self.timeline_list.selectedItems()
+        if not selected:
+            return
+
+        item = selected[0]
+        row = self.timeline_list.row(item)
+
+        if row < self.timeline_list.count() - 1:
+            # Swap in model
+            self.project.slides[row], self.project.slides[row + 1] = self.project.slides[row + 1], self.project.slides[row]
+
+            # Swap in view
+            taken = self.timeline_list.takeItem(row)
+            self.timeline_list.insertItem(row + 1, taken)
+
+            # Reselect
+            taken.setSelected(True)
+            self.schedule_preview_update()
 
     def remove_selected(self):
         # Remove from timeline
@@ -525,10 +619,12 @@ class MainWindow(QMainWindow):
             self.focal_x.setEnabled(False)
             self.focal_y.setEnabled(False)
             self.duration_spin.setEnabled(False)
+            self.cb_crossfade_global.setEnabled(False)
             self.crossfade_override.setEnabled(False)
             self.lp_group.setVisible(False)
             self.video_group.setVisible(False)
         else:
+            self.cb_crossfade_global.setEnabled(True)
             self.effect_combo.setEnabled(True)
             self.zoom_spin.setEnabled(True)
             self.focal_x.setEnabled(True)
