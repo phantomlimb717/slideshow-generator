@@ -127,12 +127,31 @@ class TimelineItemDelegate(QStyledItemDelegate):
 
 class ListWidgetDraggable(QListWidget):
     itemsDropped = Signal()
+
+    SCROLL_MARGIN = 40       # pixels from edge to trigger scroll
+    SCROLL_SPEED = 8         # pixels per event
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAcceptDrops(True)
         self.setDragEnabled(True)
         self.setDragDropMode(QListWidget.DragDrop)
         self.setDefaultDropAction(Qt.MoveAction)
+
+    def dragMoveEvent(self, event):
+        pos = event.position().toPoint()
+
+        # Auto-scroll when dragging near the edges
+        if pos.x() < self.SCROLL_MARGIN:
+            # Near left edge — scroll left
+            scrollbar = self.horizontalScrollBar()
+            scrollbar.setValue(scrollbar.value() - self.SCROLL_SPEED)
+        elif pos.x() > self.viewport().width() - self.SCROLL_MARGIN:
+            # Near right edge — scroll right
+            scrollbar = self.horizontalScrollBar()
+            scrollbar.setValue(scrollbar.value() + self.SCROLL_SPEED)
+
+        super().dragMoveEvent(event)
 
     def dropEvent(self, event):
         super().dropEvent(event)
