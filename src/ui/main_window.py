@@ -83,10 +83,10 @@ class TimelineItemDelegate(QStyledItemDelegate):
     """Custom delegate that renders timeline items as thumbnail cards with text below."""
 
     ITEM_WIDTH = 160
-    ITEM_HEIGHT = 110
+    ITEM_HEIGHT = 120
     ICON_WIDTH = 140
     ICON_HEIGHT = 80
-    TEXT_HEIGHT = 26
+    TEXT_HEIGHT = 30
     PADDING = 4
 
     def paint(self, painter, option, index):
@@ -345,13 +345,13 @@ class MainWindow(QMainWindow):
         self.timeline_list = ListWidgetDraggable()
         self.timeline_list.setFlow(QListWidget.LeftToRight)
         self.timeline_list.setWrapping(False)
-        self.timeline_list.setMinimumHeight(140)
+        self.timeline_list.setMinimumHeight(150)
         self.timeline_list.setViewMode(QListWidget.ListMode)
         self.timeline_list.setDragDropMode(QListWidget.InternalMove)
         self.timeline_list.setDefaultDropAction(Qt.MoveAction)
         self.timeline_list.setIconSize(QSize(140, 80))
         self.timeline_list.setItemDelegate(TimelineItemDelegate(self.timeline_list))
-        self.timeline_list.setGridSize(QSize(160, 114))
+        self.timeline_list.setGridSize(QSize(160, 124))
         self.timeline_list.setUniformItemSizes(True)
         self.timeline_list.setSelectionMode(QListWidget.SingleSelection)
         self.timeline_list.setHorizontalScrollMode(QListWidget.ScrollPerPixel)
