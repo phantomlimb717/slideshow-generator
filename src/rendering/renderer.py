@@ -155,21 +155,21 @@ class SlideshowRenderer:
             z2 = start_zoom
             ox1, oy1, ox2, oy2 = 0.5, 0.5, 0.5, 0.5
         elif effect == EffectPreset.PAN_LEFT_RIGHT:
-            z1, z2 = max(1.1, start_zoom), max(1.1, start_zoom)
-            ox1, oy1, ox2, oy2 = 0.4, 0.5, 0.6, 0.5
+            z1, z2 = max(1.3, start_zoom), max(1.3, start_zoom)
+            ox1, oy1, ox2, oy2 = 0.25, 0.5, 0.75, 0.5
         elif effect == EffectPreset.PAN_RIGHT_LEFT:
-            z1, z2 = max(1.1, start_zoom), max(1.1, start_zoom)
-            ox1, oy1, ox2, oy2 = 0.6, 0.5, 0.4, 0.5
+            z1, z2 = max(1.3, start_zoom), max(1.3, start_zoom)
+            ox1, oy1, ox2, oy2 = 0.75, 0.5, 0.25, 0.5
         elif effect == EffectPreset.PAN_UP:
-            z1, z2 = max(1.1, start_zoom), max(1.1, start_zoom)
-            ox1, oy1, ox2, oy2 = 0.5, 0.6, 0.5, 0.4
+            z1, z2 = max(1.3, start_zoom), max(1.3, start_zoom)
+            ox1, oy1, ox2, oy2 = 0.5, 0.75, 0.5, 0.25
         elif effect == EffectPreset.PAN_DOWN:
-            z1, z2 = max(1.1, start_zoom), max(1.1, start_zoom)
-            ox1, oy1, ox2, oy2 = 0.5, 0.4, 0.5, 0.6
+            z1, z2 = max(1.3, start_zoom), max(1.3, start_zoom)
+            ox1, oy1, ox2, oy2 = 0.5, 0.25, 0.5, 0.75
         elif effect == EffectPreset.ZOOM_IN_PAN:
             z1 = start_zoom
             z2 = start_zoom * 1.3
-            ox1, oy1, ox2, oy2 = 0.4, 0.4, 0.6, 0.6
+            ox1, oy1, ox2, oy2 = 0.3, 0.3, 0.7, 0.7
         else:
             z1, z2 = start_zoom, start_zoom
             ox1, oy1, ox2, oy2 = 0.5, 0.5, 0.5, 0.5
@@ -199,12 +199,13 @@ class SlideshowRenderer:
         resized = cv2.resize(cropped, self.resolution, interpolation=cv2.INTER_LANCZOS4)
         return resized
 
-    def generate_slide_frames(self, slide: SlideItem) -> Generator[np.ndarray, None, None]:
+    def generate_slide_frames(self, slide: SlideItem, fade_in_duration: float = 0.0, fade_out_duration: float = 0.0) -> Generator[np.ndarray, None, None]:
         import time
         """Generates all fully rendered frames for a single slide sequentially."""
         print(f"[{time.strftime('%H:%M:%S')}] [Renderer] Processing slide: {slide.media_path} ({slide.media_type.value}, {slide.duration}s, effect={slide.effect_preset.value})")
 
         num_frames = int(slide.duration * self.fps)
+        total_animation_duration = fade_in_duration + slide.duration + fade_out_duration
 
         media_path = slide.video_path if (slide.media_type == MediaType.LIVE_PHOTO and slide.use_video_clip) else slide.media_path
 
@@ -225,7 +226,8 @@ class SlideshowRenderer:
                 # Apply crop to aspect and ken burns (even to video if desired, though usually static)
                 # For videos, we might just crop to aspect to fit the screen
                 cropped = self._crop_to_aspect(frame, slide.focal_point[0], slide.focal_point[1])
-                progress = i / max(1, num_frames - 1)
+                elapsed = fade_in_duration + (i / self.fps)
+                progress = elapsed / total_animation_duration if total_animation_duration > 0 else 0.0
                 final_frame = self._apply_ken_burns(cropped, progress, slide)
                 yield final_frame
                 yielded_frames += 1
@@ -238,7 +240,8 @@ class SlideshowRenderer:
             cropped = self._crop_to_aspect(raw_img, slide.focal_point[0], slide.focal_point[1])
 
             for i in range(num_frames):
-                progress = i / max(1, num_frames - 1)
+                elapsed = fade_in_duration + (i / self.fps)
+                progress = elapsed / total_animation_duration if total_animation_duration > 0 else 0.0
                 final_frame = self._apply_ken_burns(cropped, progress, slide)
                 yield final_frame
 
@@ -259,7 +262,18 @@ class SlideshowRenderer:
         prev_slide_tail = deque()
 
         for i, slide in enumerate(self.project.slides):
-            slide_frame_gen = self.generate_slide_frames(slide)
+            # Calculate incoming transition duration for this slide
+            fade_in = 0.0
+            if i > 0:
+                fade_in = slide.transition_duration if slide.transition_duration is not None else self.project.global_transition_duration
+
+            # Calculate outgoing transition duration for this slide
+            fade_out = 0.0
+            if i < len(self.project.slides) - 1:
+                next_slide = self.project.slides[i + 1]
+                fade_out = next_slide.transition_duration if next_slide.transition_duration is not None else self.project.global_transition_duration
+
+            slide_frame_gen = self.generate_slide_frames(slide, fade_in_duration=fade_in, fade_out_duration=fade_out)
 
             # Determine incoming transition frames count
             trans_frames_count = 0
