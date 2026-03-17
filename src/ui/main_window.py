@@ -168,12 +168,10 @@ class MainWindow(QMainWindow):
 
         self.video_widget = QVideoWidget()
         self.video_widget.setAspectRatioMode(Qt.AspectRatioMode.KeepAspectRatio)
-
         palette = self.video_widget.palette()
         palette.setColor(QPalette.Window, QColor("#1e1e1e"))
         self.video_widget.setPalette(palette)
         self.video_widget.setAttribute(Qt.WA_OpaquePaintEvent)
-
         preview_layout.addWidget(self.video_widget)
 
         self.audio_output = QAudioOutput()
