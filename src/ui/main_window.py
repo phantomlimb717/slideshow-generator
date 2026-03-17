@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QToolBar, QSplitter, QLabel, QPushButton, QSlider, QComboBox,
     QSpinBox, QDoubleSpinBox, QCheckBox, QListWidget, QListWidgetItem,
-    QFrame, QFileDialog, QMessageBox, QProgressDialog
+    QFrame, QFileDialog, QMessageBox, QProgressDialog, QSizePolicy
 )
 from PySide6.QtCore import Qt, QSize, QUrl, QTimer, Signal, QThread, QEvent
 from PySide6.QtGui import QIcon, QAction, QPixmap, QImage, QPainter, QColor, QPalette
@@ -22,6 +22,7 @@ class AspectRatioContainer(QWidget):
         self.child_widget = child_widget
         self.child_widget.setParent(self)
         self.setStyleSheet("background-color: #1e1e1e;")
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -165,6 +166,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
         main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
 
         self.setup_toolbar()
 
@@ -174,6 +176,8 @@ class MainWindow(QMainWindow):
         # --- Left Panel: Media Library ---
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(4, 4, 4, 4)
+        left_layout.setSpacing(4)
         left_layout.addWidget(QLabel("Media Library (Drag & Drop)"))
 
         self.media_list = MediaLibraryWidget()
@@ -194,11 +198,17 @@ class MainWindow(QMainWindow):
         # --- Center Panel: Preview & Timeline ---
         center_panel = QWidget()
         center_layout = QVBoxLayout(center_panel)
+        center_layout.setContentsMargins(0, 0, 0, 0)
+        center_layout.setSpacing(0)
 
-        # Video Player
-        preview_frame = QFrame()
-        preview_frame.setFrameShape(QFrame.StyledPanel)
-        preview_layout = QVBoxLayout(preview_frame)
+        center_splitter = QSplitter(Qt.Vertical)
+        center_layout.addWidget(center_splitter)
+
+        # --- Top: Preview Area ---
+        preview_widget = QWidget()
+        preview_layout = QVBoxLayout(preview_widget)
+        preview_layout.setContentsMargins(4, 4, 4, 0)
+        preview_layout.setSpacing(2)
 
         self.video_widget = QVideoWidget()
         self.video_widget.setAspectRatioMode(Qt.AspectRatioMode.KeepAspectRatio)
@@ -217,6 +227,8 @@ class MainWindow(QMainWindow):
 
         # Controls
         controls_layout = QHBoxLayout()
+        controls_layout.setContentsMargins(0, 0, 0, 0)
+        controls_layout.setSpacing(4)
         self.btn_play_pause = QPushButton("Play")
         self.btn_play_pause.clicked.connect(self.toggle_play_pause)
         self.btn_play_pause.setEnabled(False)
@@ -233,7 +245,7 @@ class MainWindow(QMainWindow):
         preview_layout.addLayout(controls_layout)
 
         # Generation overlay
-        self.gen_overlay = QWidget(preview_frame)
+        self.gen_overlay = QWidget(preview_widget)
         self.gen_overlay.setStyleSheet("background-color: rgba(30, 30, 30, 220); border-radius: 5px;")
         gen_layout = QVBoxLayout(self.gen_overlay)
         gen_layout.setAlignment(Qt.AlignCenter)
@@ -251,9 +263,15 @@ class MainWindow(QMainWindow):
         self.gen_overlay.hide()
 
         # Install event filter to keep overlay positioned and sized correctly
-        preview_frame.installEventFilter(self)
+        preview_widget.installEventFilter(self)
 
-        center_layout.addWidget(preview_frame, stretch=3)
+        center_splitter.addWidget(preview_widget)
+
+        # --- Bottom: Timeline + Audio ---
+        timeline_widget = QWidget()
+        timeline_layout = QVBoxLayout(timeline_widget)
+        timeline_layout.setContentsMargins(4, 0, 4, 4)
+        timeline_layout.setSpacing(2)
 
         # Timeline
         timeline_header = QHBoxLayout()
@@ -272,7 +290,7 @@ class MainWindow(QMainWindow):
         self.global_crossfade_spin.valueChanged.connect(self.global_settings_changed)
         timeline_header.addWidget(self.global_crossfade_spin)
 
-        center_layout.addLayout(timeline_header)
+        timeline_layout.addLayout(timeline_header)
 
         self.timeline_list = ListWidgetDraggable()
         self.timeline_list.setFlow(QListWidget.LeftToRight)
@@ -283,7 +301,7 @@ class MainWindow(QMainWindow):
         self.timeline_list.setDragDropMode(QListWidget.InternalMove)
         self.timeline_list.itemsDropped.connect(self.sync_timeline_order)
         self.timeline_list.itemSelectionChanged.connect(self.on_timeline_selection)
-        center_layout.addWidget(self.timeline_list, stretch=1)
+        timeline_layout.addWidget(self.timeline_list)
 
         # Audio Track
         audio_header = QHBoxLayout()
@@ -301,7 +319,7 @@ class MainWindow(QMainWindow):
         self.global_audio_label = QLabel("100%")
         self.global_audio_slider.valueChanged.connect(lambda v: self.global_audio_label.setText(f"{v}%"))
         audio_header.addWidget(self.global_audio_label)
-        center_layout.addLayout(audio_header)
+        timeline_layout.addLayout(audio_header)
 
         self.audio_list = ListWidgetDraggable()
         self.audio_list.setFlow(QListWidget.LeftToRight)
@@ -309,7 +327,12 @@ class MainWindow(QMainWindow):
         self.audio_list.setFixedHeight(60)
         self.audio_list.setDragDropMode(QListWidget.InternalMove)
         self.audio_list.itemsDropped.connect(self.sync_audio_order)
-        center_layout.addWidget(self.audio_list)
+        timeline_layout.addWidget(self.audio_list)
+
+        center_splitter.addWidget(timeline_widget)
+
+        # Set default proportions: ~70% preview, ~30% timeline
+        center_splitter.setSizes([500, 200])
 
         main_splitter.addWidget(center_panel)
 
@@ -317,6 +340,8 @@ class MainWindow(QMainWindow):
         right_panel = QWidget()
         right_panel.setMinimumWidth(250)
         right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(8, 8, 8, 8)
+        right_layout.setSpacing(4)
         right_layout.addWidget(QLabel("Inspector"))
 
         slide_props_frame = QFrame()
