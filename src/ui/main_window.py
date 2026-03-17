@@ -925,16 +925,17 @@ class MainWindow(QMainWindow):
     def trigger_preview_generation(self):
         import time
         print(f"[{time.strftime('%H:%M:%S')}] [UI] Preview generation triggered with {len(self.project.slides)} slides")
+
+        # Release the current preview file before generating a new one to prevent PermissionError on cleanup
+        self.media_player.stop()
+        self.media_player.setSource(QUrl())
+
         if not self.project.slides:
-            # Stop playback, clear video
-            self.media_player.stop()
-            self.media_player.setSource(QUrl())
             self.btn_play_pause.setText("Play")
             self.btn_play_pause.setEnabled(False)
             self.scrubber.setEnabled(False)
             return
 
-        self.media_player.pause()
         self.btn_play_pause.setText("Play")
         self.btn_play_pause.setEnabled(False)
         self.scrubber.setEnabled(False)
