@@ -1,6 +1,7 @@
 import os
 import tempfile
 import threading
+import subprocess
 from PySide6.QtCore import QObject, Signal, QTimer
 from rendering.renderer import SlideshowRenderer
 from audio.mixer import build_audio_mix
@@ -66,12 +67,20 @@ class PreviewGenerator(QObject):
             print(f"[{time.strftime('%H:%M:%S')}] [Preview] Starting generation for {len(self.project.slides)} slides")
             start_time = time.time()
 
+            has_audio = (
+                len(self.project.audio_tracks) > 0 or
+                any(s.include_audio for s in self.project.slides)
+            )
+
             # 1. Generate audio mix
-            print(f"[{time.strftime('%H:%M:%S')}] [Preview] Building audio mix...")
-            t = time.time()
             audio_path = os.path.join(self.temp_dir, "preview_audio.wav")
-            build_audio_mix(self.project, audio_path)
-            print(f"[{time.strftime('%H:%M:%S')}] [Preview] Audio mix complete ({time.time()-t:.1f}s)")
+            if has_audio:
+                print(f"[{time.strftime('%H:%M:%S')}] [Preview] Building audio mix...")
+                t = time.time()
+                build_audio_mix(self.project, audio_path)
+                print(f"[{time.strftime('%H:%M:%S')}] [Preview] Audio mix complete ({time.time()-t:.1f}s)")
+            else:
+                print(f"[{time.strftime('%H:%M:%S')}] [Preview] Skipping audio mix (no audio tracks/clips)")
 
             if self._cancel:
                 return
@@ -88,7 +97,7 @@ class PreviewGenerator(QObject):
                 .input('pipe:', format='rawvideo', pix_fmt='rgb24', s=f'640x360', r=30)
                 .output(video_path, pix_fmt='yuv420p', vcodec='libx264', crf=28, preset='ultrafast')
                 .overwrite_output()
-                .run_async(pipe_stdin=True, quiet=True)
+                .run_async(pipe_stdin=True, pipe_stderr=True)
             )
 
             try:
@@ -114,11 +123,24 @@ class PreviewGenerator(QObject):
                 self.error_occurred.emit(f"FFmpeg encoding failed: {stderr_output or str(e)}")
                 return
             finally:
+                print(f"[{time.strftime('%H:%M:%S')}] [Preview] Closing FFmpeg stdin...")
                 try:
                     process.stdin.close()
+                except Exception as e:
+                    print(f"[{time.strftime('%H:%M:%S')}] [Preview] Error closing stdin: {e}")
+                print(f"[{time.strftime('%H:%M:%S')}] [Preview] Waiting for FFmpeg to finish...")
+                try:
+                    return_code = process.wait(timeout=30)
+                    print(f"[{time.strftime('%H:%M:%S')}] [Preview] FFmpeg exited with code {return_code}")
+                    if return_code != 0 and process.stderr:
+                        stderr_output = process.stderr.read().decode()
+                        print(f"[{time.strftime('%H:%M:%S')}] [Preview] FFmpeg error: {stderr_output[-500:]}")
+                except subprocess.TimeoutExpired:
+                    print(f"[{time.strftime('%H:%M:%S')}] [Preview] FFmpeg timed out, killing...")
+                    process.kill()
                     process.wait()
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"[{time.strftime('%H:%M:%S')}] [Preview] Error waiting for FFmpeg: {e}")
 
             if self._cancel:
                 return
@@ -127,7 +149,8 @@ class PreviewGenerator(QObject):
             print(f"[{time.strftime('%H:%M:%S')}] [Preview] Muxing audio and video...")
             t = time.time()
             final_path = os.path.join(self.temp_dir, "preview_final.mp4")
-            if os.path.exists(audio_path):
+            actual_has_audio = has_audio and os.path.exists(audio_path) and os.path.getsize(audio_path) > 0
+            if actual_has_audio:
                 # Mix them
                 try:
                     video_stream = ffmpeg.input(video_path)
