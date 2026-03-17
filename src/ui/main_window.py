@@ -55,26 +55,40 @@ from export.exporter import Exporter
 from ui.export_dialog import ExportProgressDialog, ExportSettingsDialog
 from models.serialization import save_project, load_project
 
-class ThumbnailWorker(QThread):
-    thumbnail_ready = Signal(int, QImage, str) # index, qimage, target_list ('media' or 'timeline')
+import queue
 
-    def __init__(self, items: list[tuple[int, str, tuple[int, int], str]], parent=None):
+class ThumbnailWorker(QThread):
+    thumbnail_ready = Signal(int, QImage, str, int) # index, qimage, target_list, generation_id
+
+    def __init__(self, parent=None):
         super().__init__(parent)
-        # items is a list of tuples: (index, media_path, size, target_list)
-        self.items = items
+        self._queue = queue.Queue()
         self._cancel = False
 
+    def enqueue(self, items: list[tuple[int, str, tuple[int, int], str, int]]):
+        for item in items:
+            self._queue.put(item)
+
     def run(self):
-        for index, path, size, target_list in self.items:
-            if self._cancel:
-                break
+        while not self._cancel:
             try:
+                # Use a timeout to periodically check the cancel flag
+                item = self._queue.get(timeout=0.1)
+                index, path, size, target_list, generation_id = item
+            except queue.Empty:
+                continue
+
+            try:
+                if self._cancel:
+                    break
                 thumb = extract_thumbnail(path, size=size)
                 if thumb and not self._cancel:
                     qimg = ImageQt.ImageQt(thumb.convert("RGBA"))
-                    self.thumbnail_ready.emit(index, QImage(qimg), target_list)
+                    self.thumbnail_ready.emit(index, QImage(qimg), target_list, generation_id)
             except Exception as e:
                 print(f"Error generating thumbnail for {path}: {e}")
+            finally:
+                self._queue.task_done()
 
     def cancel(self):
         self._cancel = True
@@ -208,8 +222,13 @@ class MainWindow(QMainWindow):
         self.current_project_path = None
 
         self.preview_generator = None
-        self.thumbnail_worker = None
-        self._old_thumbnail_workers = []
+
+        self.thumbnail_worker = ThumbnailWorker(self)
+        self.thumbnail_worker.thumbnail_ready.connect(self.on_thumbnail_ready)
+        self.thumbnail_worker.start()
+
+        self._media_gen_id = 0
+        self._timeline_gen_id = 0
 
         self.setup_ui()
         self.apply_dark_theme()
@@ -683,14 +702,8 @@ class MainWindow(QMainWindow):
     def refresh_media_list(self):
         self.media_list.clear()
 
-        # Stop existing worker if running
-        if self.thumbnail_worker and self.thumbnail_worker.isRunning():
-            self.thumbnail_worker.cancel()
-            self._old_thumbnail_workers.append(self.thumbnail_worker)
-            self.thumbnail_worker.finished.connect(
-                lambda w=self.thumbnail_worker: self._cleanup_thumbnail_worker(w)
-            )
-            self.thumbnail_worker = None
+        self._media_gen_id += 1
+        current_gen_id = self._media_gen_id
 
         items_to_process = []
         for index, slide in enumerate(self.media_library):
@@ -705,7 +718,7 @@ class MainWindow(QMainWindow):
             if slide.media_type == MediaType.LIVE_PHOTO and slide.use_video_clip and slide.video_path:
                 thumb_path = slide.video_path
 
-            items_to_process.append((index, thumb_path, (160, 90), 'media'))
+            items_to_process.append((index, thumb_path, (160, 90), 'media', current_gen_id))
 
             name = os.path.basename(slide.media_path)
             if slide.media_type == MediaType.LIVE_PHOTO:
@@ -715,22 +728,19 @@ class MainWindow(QMainWindow):
             self.media_list.addItem(item)
 
         if items_to_process:
-            self.thumbnail_worker = ThumbnailWorker(items_to_process, self)
-            self.thumbnail_worker.thumbnail_ready.connect(self.on_thumbnail_ready)
-            self.thumbnail_worker.start()
+            self.thumbnail_worker.enqueue(items_to_process)
 
-    def _cleanup_thumbnail_worker(self, worker):
-        if worker in self._old_thumbnail_workers:
-            self._old_thumbnail_workers.remove(worker)
-        worker.deleteLater()
-
-    def on_thumbnail_ready(self, index, qimage, target_list):
+    def on_thumbnail_ready(self, index, qimage, target_list, generation_id):
         pixmap = QPixmap.fromImage(qimage)
         if target_list == 'media':
+            if generation_id != self._media_gen_id:
+                return
             if index < self.media_list.count():
                 item = self.media_list.item(index)
                 item.setIcon(QIcon(pixmap))
         elif target_list == 'timeline':
+            if generation_id != self._timeline_gen_id:
+                return
             if index < self.timeline_list.count():
                 item = self.timeline_list.item(index)
                 item.setIcon(QIcon(pixmap))
@@ -751,14 +761,8 @@ class MainWindow(QMainWindow):
     def refresh_timeline(self):
         self.timeline_list.clear()
 
-        # Stop existing worker if running
-        if self.thumbnail_worker and self.thumbnail_worker.isRunning():
-            self.thumbnail_worker.cancel()
-            self._old_thumbnail_workers.append(self.thumbnail_worker)
-            self.thumbnail_worker.finished.connect(
-                lambda w=self.thumbnail_worker: self._cleanup_thumbnail_worker(w)
-            )
-            self.thumbnail_worker = None
+        self._timeline_gen_id += 1
+        current_gen_id = self._timeline_gen_id
 
         items_to_process = []
         for index, slide in enumerate(self.project.slides):
@@ -773,7 +777,7 @@ class MainWindow(QMainWindow):
             if slide.media_type == MediaType.LIVE_PHOTO and slide.use_video_clip and slide.video_path:
                 thumb_path = slide.video_path
 
-            items_to_process.append((index, thumb_path, (140, 80), 'timeline'))
+            items_to_process.append((index, thumb_path, (140, 80), 'timeline', current_gen_id))
 
             dur_str = f"{slide.duration:.1f}s"
             item.setText(f"{dur_str}\n{slide.effect_preset.value}")
@@ -781,9 +785,7 @@ class MainWindow(QMainWindow):
             self.timeline_list.addItem(item)
 
         if items_to_process:
-            self.thumbnail_worker = ThumbnailWorker(items_to_process, self)
-            self.thumbnail_worker.thumbnail_ready.connect(self.on_thumbnail_ready)
-            self.thumbnail_worker.start()
+            self.thumbnail_worker.enqueue(items_to_process)
 
     def sync_timeline_order(self):
         # Update project.slides based on the new list order
@@ -1220,6 +1222,11 @@ class MainWindow(QMainWindow):
         if self.preview_generator:
             self.preview_generator.cancel()
             self.preview_generator.cleanup()
+
+        if self.thumbnail_worker:
+            self.thumbnail_worker.cancel()
+            self.thumbnail_worker.wait()
+
         event.accept()
 
 if __name__ == "__main__":
