@@ -39,19 +39,13 @@ def dict_to_slide_item(data: Dict[str, Any]) -> SlideItem:
 def audio_item_to_dict(audio: AudioItem) -> Dict[str, Any]:
     return {
         "file_path": audio.file_path,
-        "start_time": audio.start_time,
-        "trim_in": audio.trim_in,
-        "duration": audio.duration,
-        "volume": audio.volume
+        "duration": audio.duration
     }
 
 def dict_to_audio_item(data: Dict[str, Any]) -> AudioItem:
     return AudioItem(
         file_path=data["file_path"],
-        start_time=data.get("start_time", 0.0),
-        trim_in=data.get("trim_in", 0.0),
-        duration=data.get("duration"),
-        volume=data.get("volume", 1.0)
+        duration=data.get("duration", 0.0)
     )
 
 def project_to_dict(project: Project) -> Dict[str, Any]:
