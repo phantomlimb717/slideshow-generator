@@ -6,8 +6,8 @@ from PySide6.QtWidgets import (
     QSpinBox, QDoubleSpinBox, QCheckBox, QListWidget, QListWidgetItem,
     QFrame, QFileDialog, QMessageBox, QProgressDialog
 )
-from PySide6.QtCore import Qt, QSize, QUrl, QTimer, Signal
-from PySide6.QtGui import QIcon, QAction, QPixmap, QImage
+from PySide6.QtCore import Qt, QSize, QUrl, QTimer, Signal, QThread
+from PySide6.QtGui import QIcon, QAction, QPixmap, QImage, QPainter, QColor
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PIL import ImageQt
@@ -17,6 +17,32 @@ from utils.media_import import scan_directory_for_media, extract_thumbnail
 from rendering.preview import PreviewGenerator
 from export.exporter import Exporter
 from ui.export_dialog import ExportProgressDialog, ExportSettingsDialog
+from models.serialization import save_project, load_project
+
+class ThumbnailWorker(QThread):
+    thumbnail_ready = Signal(int, QPixmap, str) # index, pixmap, target_list ('media' or 'timeline')
+
+    def __init__(self, items: list[tuple[int, str, tuple[int, int], str]], parent=None):
+        super().__init__(parent)
+        # items is a list of tuples: (index, media_path, size, target_list)
+        self.items = items
+        self._cancel = False
+
+    def run(self):
+        for index, path, size, target_list in self.items:
+            if self._cancel:
+                break
+            try:
+                thumb = extract_thumbnail(path, size=size)
+                if thumb and not self._cancel:
+                    qimg = ImageQt.ImageQt(thumb.convert("RGBA"))
+                    pixmap = QPixmap.fromImage(qimg)
+                    self.thumbnail_ready.emit(index, pixmap, target_list)
+            except Exception as e:
+                print(f"Error generating thumbnail for {path}: {e}")
+
+    def cancel(self):
+        self._cancel = True
 
 class ListWidgetDraggable(QListWidget):
     itemsDropped = Signal()
@@ -74,6 +100,8 @@ class MainWindow(QMainWindow):
 
         self.project = Project()
         self.media_library: list[SlideItem] = []
+        self.is_dirty = False
+        self.current_project_path = None
 
         # Debounce timer for preview regeneration
         self.preview_timer = QTimer()
@@ -82,6 +110,7 @@ class MainWindow(QMainWindow):
         self.preview_timer.timeout.connect(self.trigger_preview_generation)
 
         self.preview_generator = None
+        self.thumbnail_worker = None
 
         self.setup_ui()
         self.apply_dark_theme()
@@ -342,6 +371,16 @@ class MainWindow(QMainWindow):
         toolbar = QToolBar("Main Toolbar")
         self.addToolBar(toolbar)
 
+        act_open = QAction("Open Project", self)
+        act_open.triggered.connect(self.open_project_dialog)
+        toolbar.addAction(act_open)
+
+        act_save = QAction("Save Project", self)
+        act_save.triggered.connect(self.save_project_dialog)
+        toolbar.addAction(act_save)
+
+        toolbar.addSeparator()
+
         act_add = QAction("Add Folder...", self)
         act_add.triggered.connect(self.add_media_dialog)
         toolbar.addAction(act_add)
@@ -449,19 +488,26 @@ class MainWindow(QMainWindow):
 
     def refresh_media_list(self):
         self.media_list.clear()
-        for slide in self.media_library:
+
+        # Stop existing worker if running
+        if self.thumbnail_worker and self.thumbnail_worker.isRunning():
+            self.thumbnail_worker.cancel()
+            self.thumbnail_worker.wait()
+
+        items_to_process = []
+        for index, slide in enumerate(self.media_library):
             item = QListWidgetItem()
-            # Generate thumbnail
+
+            # Create a solid gray placeholder pixmap matching #2d2d30
+            placeholder = QPixmap(160, 90)
+            placeholder.fill(QColor("#2d2d30"))
+            item.setIcon(QIcon(placeholder))
+
             thumb_path = slide.media_path
             if slide.media_type == MediaType.LIVE_PHOTO and slide.use_video_clip and slide.video_path:
                 thumb_path = slide.video_path
 
-            thumb = extract_thumbnail(thumb_path)
-            if thumb:
-                # Convert PIL to QPixmap
-                qimg = ImageQt.ImageQt(thumb.convert("RGBA"))
-                pixmap = QPixmap.fromImage(qimg)
-                item.setIcon(QIcon(pixmap))
+            items_to_process.append((index, thumb_path, (160, 90), 'media'))
 
             name = os.path.basename(slide.media_path)
             if slide.media_type == MediaType.LIVE_PHOTO:
@@ -469,6 +515,21 @@ class MainWindow(QMainWindow):
             item.setText(name)
             item.setData(Qt.UserRole, slide)
             self.media_list.addItem(item)
+
+        if items_to_process:
+            self.thumbnail_worker = ThumbnailWorker(items_to_process, self)
+            self.thumbnail_worker.thumbnail_ready.connect(self.on_thumbnail_ready)
+            self.thumbnail_worker.start()
+
+    def on_thumbnail_ready(self, index, pixmap, target_list):
+        if target_list == 'media':
+            if index < self.media_list.count():
+                item = self.media_list.item(index)
+                item.setIcon(QIcon(pixmap))
+        elif target_list == 'timeline':
+            if index < self.timeline_list.count():
+                item = self.timeline_list.item(index)
+                item.setIcon(QIcon(pixmap))
 
     # --- Timeline & Audio Methods ---
     def add_selected_to_timeline(self):
@@ -485,22 +546,36 @@ class MainWindow(QMainWindow):
 
     def refresh_timeline(self):
         self.timeline_list.clear()
-        for slide in self.project.slides:
+
+        # Stop existing worker if running
+        if self.thumbnail_worker and self.thumbnail_worker.isRunning():
+            self.thumbnail_worker.cancel()
+            self.thumbnail_worker.wait()
+
+        items_to_process = []
+        for index, slide in enumerate(self.project.slides):
             item = QListWidgetItem()
+
+            # Create a solid gray placeholder pixmap matching #2d2d30
+            placeholder = QPixmap(120, 68)
+            placeholder.fill(QColor("#2d2d30"))
+            item.setIcon(QIcon(placeholder))
 
             thumb_path = slide.media_path
             if slide.media_type == MediaType.LIVE_PHOTO and slide.use_video_clip and slide.video_path:
                 thumb_path = slide.video_path
 
-            thumb = extract_thumbnail(thumb_path, size=(120, 68))
-            if thumb:
-                qimg = ImageQt.ImageQt(thumb.convert("RGBA"))
-                item.setIcon(QIcon(QPixmap.fromImage(qimg)))
+            items_to_process.append((index, thumb_path, (120, 68), 'timeline'))
 
             dur_str = f"{slide.duration:.1f}s"
             item.setText(f"{dur_str}\n{slide.effect_preset.value}")
             item.setData(Qt.UserRole, slide)
             self.timeline_list.addItem(item)
+
+        if items_to_process:
+            self.thumbnail_worker = ThumbnailWorker(items_to_process, self)
+            self.thumbnail_worker.thumbnail_ready.connect(self.on_thumbnail_ready)
+            self.thumbnail_worker.start()
 
     def sync_timeline_order(self):
         # Update project.slides based on the new list order
@@ -712,8 +787,87 @@ class MainWindow(QMainWindow):
 
         self.schedule_preview_update()
 
+    # --- Project Save/Load Methods ---
+    def check_unsaved_changes(self) -> bool:
+        """Shows confirmation dialog if there are unsaved changes. Returns True if we can proceed (saved or discarded), False to cancel."""
+        if not self.is_dirty:
+            return True
+
+        reply = QMessageBox.question(self, "Unsaved Changes",
+                                     "You have unsaved changes. Do you want to save before proceeding?",
+                                     QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+                                     QMessageBox.Save)
+
+        if reply == QMessageBox.Save:
+            self.save_project_dialog()
+            return not self.is_dirty # True if save was successful
+        elif reply == QMessageBox.Discard:
+            return True
+        else:
+            return False
+
+    def save_project_dialog(self):
+        if not self.current_project_path:
+            path, _ = QFileDialog.getSaveFileName(self, "Save Project", "", "Slideshow Project (*.fms)")
+            if not path:
+                return
+            if not path.endswith('.fms'):
+                path += '.fms'
+            self.current_project_path = path
+
+        try:
+            save_project(self.project, self.current_project_path)
+            self.is_dirty = False
+            QMessageBox.information(self, "Project Saved", f"Project successfully saved to:\n{self.current_project_path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Save Error", f"Failed to save project:\n{str(e)}")
+
+    def open_project_dialog(self):
+        if not self.check_unsaved_changes():
+            return
+
+        path, _ = QFileDialog.getOpenFileName(self, "Open Project", "", "Slideshow Project (*.fms)")
+        if not path:
+            return
+
+        try:
+            project, missing_files = load_project(path)
+            self.project = project
+            self.current_project_path = path
+            self.is_dirty = False
+
+            # Rebuild media library
+            # Extract unique paths from project.slides
+            paths = []
+            for slide in self.project.slides:
+                if slide.media_path not in paths:
+                    paths.append(slide.media_path)
+
+            self.media_library.clear()
+            self.handle_files_dropped(paths)
+
+            # Refresh UI
+            self.refresh_timeline()
+            self.refresh_audio_list()
+            self.global_audio_slider.setValue(int(self.project.backing_track_volume * 100))
+            self.global_crossfade_spin.setValue(self.project.global_transition_duration)
+            self.update_inspector_state(None)
+
+            self.schedule_preview_update()
+
+            if missing_files:
+                missing_str = "\n".join(missing_files[:10])
+                if len(missing_files) > 10:
+                    missing_str += f"\n... and {len(missing_files) - 10} more."
+                QMessageBox.warning(self, "Missing Files",
+                                    f"The following files could not be found. Please relocate them to resolve missing media:\n\n{missing_str}")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Load Error", f"Failed to load project:\n{str(e)}")
+
     # --- Preview Methods ---
     def schedule_preview_update(self):
+        self.is_dirty = True
         self.preview_timer.start()
 
     def trigger_preview_generation(self):
@@ -818,6 +972,21 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Clean up when application is closing."""
+        if self.is_dirty:
+            reply = QMessageBox.question(self, 'Unsaved Changes',
+                                         "You have unsaved changes. Save before closing?",
+                                         QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+                                         QMessageBox.Save)
+
+            if reply == QMessageBox.Save:
+                self.save_project_dialog()
+                if self.is_dirty: # Save failed or cancelled
+                    event.ignore()
+                    return
+            elif reply == QMessageBox.Cancel:
+                event.ignore()
+                return
+
         if self.preview_generator:
             self.preview_generator.cancel()
             self.preview_generator.cleanup()
