@@ -103,14 +103,9 @@ class MainWindow(QMainWindow):
         self.is_dirty = False
         self.current_project_path = None
 
-        # Debounce timer for preview regeneration
-        self.preview_timer = QTimer()
-        self.preview_timer.setSingleShot(True)
-        self.preview_timer.setInterval(1000) # 1 second debounce
-        self.preview_timer.timeout.connect(self.trigger_preview_generation)
-
         self.preview_generator = None
         self.thumbnail_worker = None
+        self._old_thumbnail_workers = []
 
         self.setup_ui()
         self.apply_dark_theme()
@@ -185,13 +180,25 @@ class MainWindow(QMainWindow):
         preview_layout.addLayout(controls_layout)
 
         # Generation overlay
+        self.gen_overlay = QWidget()
+        self.gen_overlay.setStyleSheet("background-color: #2d2d30; border-radius: 5px;")
+        gen_layout = QVBoxLayout(self.gen_overlay)
+        gen_layout.setAlignment(Qt.AlignCenter)
+
         self.gen_label = QLabel("Generating preview...")
-        self.gen_label.setStyleSheet("background-color: rgba(0,0,0,150); color: white; padding: 10px; border-radius: 5px;")
+        self.gen_label.setStyleSheet("color: white; padding: 10px; font-weight: bold;")
         self.gen_label.setAlignment(Qt.AlignCenter)
-        self.gen_label.hide()
+        gen_layout.addWidget(self.gen_label)
+
+        self.btn_cancel_preview = QPushButton("Cancel")
+        self.btn_cancel_preview.setStyleSheet("QPushButton { background-color: #3f3f46; color: white; border: 1px solid #555555; padding: 5px 15px; border-radius: 3px; } QPushButton:hover { background-color: #4f4f56; } QPushButton:pressed { background-color: #007acc; }")
+        self.btn_cancel_preview.clicked.connect(self.cancel_preview_generation)
+        gen_layout.addWidget(self.btn_cancel_preview, alignment=Qt.AlignCenter)
+
+        self.gen_overlay.hide()
         # Overlay hack: put it in the same layout but we'd need a layered layout to really float it.
         # For simplicity, we just put it below the video widget and show/hide.
-        preview_layout.addWidget(self.gen_label)
+        preview_layout.addWidget(self.gen_overlay)
 
         center_layout.addWidget(preview_frame, stretch=2)
 
@@ -403,7 +410,7 @@ class MainWindow(QMainWindow):
 
         toolbar.addSeparator()
 
-        act_prev = QAction("Force Preview Update", self)
+        act_prev = QAction("Generate Preview", self)
         act_prev.triggered.connect(self.trigger_preview_generation)
         toolbar.addAction(act_prev)
 
@@ -492,7 +499,11 @@ class MainWindow(QMainWindow):
         # Stop existing worker if running
         if self.thumbnail_worker and self.thumbnail_worker.isRunning():
             self.thumbnail_worker.cancel()
-            self.thumbnail_worker.wait()
+            self._old_thumbnail_workers.append(self.thumbnail_worker)
+            self.thumbnail_worker.finished.connect(
+                lambda w=self.thumbnail_worker: self._cleanup_thumbnail_worker(w)
+            )
+            self.thumbnail_worker = None
 
         items_to_process = []
         for index, slide in enumerate(self.media_library):
@@ -521,6 +532,11 @@ class MainWindow(QMainWindow):
             self.thumbnail_worker.thumbnail_ready.connect(self.on_thumbnail_ready)
             self.thumbnail_worker.start()
 
+    def _cleanup_thumbnail_worker(self, worker):
+        if worker in self._old_thumbnail_workers:
+            self._old_thumbnail_workers.remove(worker)
+        worker.deleteLater()
+
     def on_thumbnail_ready(self, index, pixmap, target_list):
         if target_list == 'media':
             if index < self.media_list.count():
@@ -542,7 +558,7 @@ class MainWindow(QMainWindow):
             self.project.slides.append(new_slide)
 
         self.refresh_timeline()
-        self.schedule_preview_update()
+        self.is_dirty = True
 
     def refresh_timeline(self):
         self.timeline_list.clear()
@@ -550,7 +566,11 @@ class MainWindow(QMainWindow):
         # Stop existing worker if running
         if self.thumbnail_worker and self.thumbnail_worker.isRunning():
             self.thumbnail_worker.cancel()
-            self.thumbnail_worker.wait()
+            self._old_thumbnail_workers.append(self.thumbnail_worker)
+            self.thumbnail_worker.finished.connect(
+                lambda w=self.thumbnail_worker: self._cleanup_thumbnail_worker(w)
+            )
+            self.thumbnail_worker = None
 
         items_to_process = []
         for index, slide in enumerate(self.project.slides):
@@ -584,7 +604,7 @@ class MainWindow(QMainWindow):
             item = self.timeline_list.item(i)
             new_slides.append(item.data(Qt.UserRole))
         self.project.slides = new_slides
-        self.schedule_preview_update()
+        self.is_dirty = True
 
     def move_slide_up(self):
         selected = self.timeline_list.selectedItems()
@@ -604,7 +624,7 @@ class MainWindow(QMainWindow):
 
             # Reselect
             taken.setSelected(True)
-            self.schedule_preview_update()
+            self.is_dirty = True
 
     def move_slide_down(self):
         selected = self.timeline_list.selectedItems()
@@ -624,7 +644,7 @@ class MainWindow(QMainWindow):
 
             # Reselect
             taken.setSelected(True)
-            self.schedule_preview_update()
+            self.is_dirty = True
 
     def remove_selected(self):
         # Remove from timeline
@@ -635,7 +655,7 @@ class MainWindow(QMainWindow):
                 if slide in self.project.slides:
                     self.project.slides.remove(slide)
             self.refresh_timeline()
-            self.schedule_preview_update()
+            self.is_dirty = True
 
         # Remove from audio
         a_sel = self.audio_list.selectedItems()
@@ -645,14 +665,14 @@ class MainWindow(QMainWindow):
                 if audio in self.project.audio_tracks:
                     self.project.audio_tracks.remove(audio)
             self.refresh_audio_list()
-            self.schedule_preview_update()
+            self.is_dirty = True
 
     def add_audio_dialog(self):
         files, _ = QFileDialog.getOpenFileNames(self, "Select Audio Files", "", "Audio Files (*.mp3 *.wav *.m4a *.aac *.flac *.ogg)")
         for f in files:
             self.project.audio_tracks.append(AudioItem(file_path=f))
         self.refresh_audio_list()
-        self.schedule_preview_update()
+        self.is_dirty = True
 
     def refresh_audio_list(self):
         self.audio_list.clear()
@@ -668,13 +688,13 @@ class MainWindow(QMainWindow):
             item = self.audio_list.item(i)
             new_audio.append(item.data(Qt.UserRole))
         self.project.audio_tracks = new_audio
-        self.schedule_preview_update()
+        self.is_dirty = True
 
     # --- Global Project Methods ---
     def global_settings_changed(self):
         self.project.backing_track_volume = self.global_audio_slider.value() / 100.0
         self.project.global_transition_duration = self.global_crossfade_spin.value()
-        self.schedule_preview_update()
+        self.is_dirty = True
 
     # --- Inspector Methods ---
     def on_timeline_selection(self):
@@ -785,7 +805,7 @@ class MainWindow(QMainWindow):
         # If they toggle live photo video clip, we might need to show/hide the video audio controls
         self.update_inspector_state(slide)
 
-        self.schedule_preview_update()
+        self.is_dirty = True
 
     # --- Project Save/Load Methods ---
     def check_unsaved_changes(self) -> bool:
@@ -853,8 +873,6 @@ class MainWindow(QMainWindow):
             self.global_crossfade_spin.setValue(self.project.global_transition_duration)
             self.update_inspector_state(None)
 
-            self.schedule_preview_update()
-
             if missing_files:
                 missing_str = "\n".join(missing_files[:10])
                 if len(missing_files) > 10:
@@ -866,10 +884,6 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Load Error", f"Failed to load project:\n{str(e)}")
 
     # --- Preview Methods ---
-    def schedule_preview_update(self):
-        self.is_dirty = True
-        self.preview_timer.start()
-
     def trigger_preview_generation(self):
         if not self.project.slides:
             # Stop playback, clear video
@@ -878,7 +892,7 @@ class MainWindow(QMainWindow):
             return
 
         self.media_player.pause()
-        self.gen_label.show()
+        self.gen_overlay.show()
 
         if self.preview_generator:
             self.preview_generator.cancel()
@@ -889,14 +903,19 @@ class MainWindow(QMainWindow):
         self.preview_generator.generate()
 
     def on_preview_ready(self, video_path):
-        self.gen_label.hide()
+        self.gen_overlay.hide()
         self.media_player.setSource(QUrl.fromLocalFile(video_path))
         self.media_player.play()
         self.btn_play_pause.setText("Pause")
 
     def on_preview_error(self, err_msg):
-        self.gen_label.hide()
+        self.gen_overlay.hide()
         print(f"Preview Generation Error: {err_msg}")
+
+    def cancel_preview_generation(self):
+        if self.preview_generator:
+            self.preview_generator.cancel()
+        self.gen_overlay.hide()
 
     # --- Player Controls ---
     def toggle_play_pause(self):
