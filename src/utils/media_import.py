@@ -121,7 +121,9 @@ def extract_thumbnail(media_path: str, size: Tuple[int, int] = (160, 90)) -> Opt
             import io
             img = Image.open(io.BytesIO(out))
             img.thumbnail(size)
-            return img
+            padded = Image.new('RGB', size, (0, 0, 0))
+            padded.paste(img, ((size[0] - img.width) // 2, (size[1] - img.height) // 2))
+            return padded
         else:
             # Image handling (Pillow handles HEIC via pillow_heif plugin)
             img = Image.open(media_path)
@@ -130,7 +132,9 @@ def extract_thumbnail(media_path: str, size: Tuple[int, int] = (160, 90)) -> Opt
             img = ImageOps.exif_transpose(img)
 
             img.thumbnail(size)
-            return img
+            padded = Image.new('RGB', size, (0, 0, 0))
+            padded.paste(img, ((size[0] - img.width) // 2, (size[1] - img.height) // 2))
+            return padded
     except Exception as e:
         print(f"Error extracting thumbnail for {media_path}: {e}")
         return None
