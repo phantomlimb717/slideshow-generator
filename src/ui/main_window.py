@@ -351,6 +351,8 @@ class MainWindow(QMainWindow):
         self.timeline_list.setDefaultDropAction(Qt.MoveAction)
         self.timeline_list.setIconSize(QSize(140, 80))
         self.timeline_list.setItemDelegate(TimelineItemDelegate(self.timeline_list))
+        self.timeline_list.setGridSize(QSize(160, 114))
+        self.timeline_list.setUniformItemSizes(True)
         self.timeline_list.setSelectionMode(QListWidget.SingleSelection)
         self.timeline_list.setHorizontalScrollMode(QListWidget.ScrollPerPixel)
         self.timeline_list.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
