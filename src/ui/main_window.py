@@ -20,7 +20,7 @@ from ui.export_dialog import ExportProgressDialog, ExportSettingsDialog
 from models.serialization import save_project, load_project
 
 class ThumbnailWorker(QThread):
-    thumbnail_ready = Signal(int, QPixmap, str) # index, pixmap, target_list ('media' or 'timeline')
+    thumbnail_ready = Signal(int, QImage, str) # index, qimage, target_list ('media' or 'timeline')
 
     def __init__(self, items: list[tuple[int, str, tuple[int, int], str]], parent=None):
         super().__init__(parent)
@@ -36,8 +36,7 @@ class ThumbnailWorker(QThread):
                 thumb = extract_thumbnail(path, size=size)
                 if thumb and not self._cancel:
                     qimg = ImageQt.ImageQt(thumb.convert("RGBA"))
-                    pixmap = QPixmap.fromImage(qimg)
-                    self.thumbnail_ready.emit(index, pixmap, target_list)
+                    self.thumbnail_ready.emit(index, QImage(qimg), target_list)
             except Exception as e:
                 print(f"Error generating thumbnail for {path}: {e}")
 
@@ -178,6 +177,7 @@ class MainWindow(QMainWindow):
         self.media_player.positionChanged.connect(self.update_scrubber)
         self.media_player.durationChanged.connect(self.update_duration)
         self.media_player.mediaStatusChanged.connect(self.handle_media_status)
+        self.media_player.errorOccurred.connect(self.on_media_error)
 
         # Controls
         controls_layout = QHBoxLayout()
@@ -574,7 +574,8 @@ class MainWindow(QMainWindow):
             self._old_thumbnail_workers.remove(worker)
         worker.deleteLater()
 
-    def on_thumbnail_ready(self, index, pixmap, target_list):
+    def on_thumbnail_ready(self, index, qimage, target_list):
+        pixmap = QPixmap.fromImage(qimage)
         if target_list == 'media':
             if index < self.media_list.count():
                 item = self.media_list.item(index)
@@ -964,6 +965,9 @@ class MainWindow(QMainWindow):
         print(f"[{time.strftime('%H:%M:%S')}] [UI] Preview error: {err_msg}")
         self.gen_overlay.hide()
         print(f"Preview Generation Error: {err_msg}")
+
+    def on_media_error(self, error, error_string):
+        print(f"[UI] QMediaPlayer error: {error} — {error_string}")
 
     def cancel_preview_generation(self):
         import time

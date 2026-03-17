@@ -1,6 +1,8 @@
 import os
 import tempfile
 import threading
+import subprocess
+import time
 from PySide6.QtCore import QObject, Signal
 from rendering.renderer import SlideshowRenderer
 from audio.mixer import build_audio_mix
@@ -39,9 +41,18 @@ class Exporter(QObject):
 
     def _run_export(self):
         try:
+            has_audio = (
+                len(self.project.audio_tracks) > 0 or
+                any(s.include_audio for s in self.project.slides)
+            )
+
             # 1. Generate audio mix
             audio_path = os.path.join(self.temp_dir, "export_audio.wav")
-            build_audio_mix(self.project, audio_path)
+            if has_audio:
+                print(f"[{time.strftime('%H:%M:%S')}] [Export] Building audio mix...")
+                build_audio_mix(self.project, audio_path)
+            else:
+                print(f"[{time.strftime('%H:%M:%S')}] [Export] Skipping audio mix (no audio tracks/clips)")
 
             if self._cancel:
                 return
@@ -56,7 +67,7 @@ class Exporter(QObject):
                 .input('pipe:', format='rawvideo', pix_fmt='rgb24', s=f'{self.resolution[0]}x{self.resolution[1]}', r=self.fps)
                 .output(temp_video, pix_fmt='yuv420p', vcodec='libx264', crf=self.quality, preset='medium')
                 .overwrite_output()
-                .run_async(pipe_stdin=True, quiet=True)
+                .run_async(pipe_stdin=True, pipe_stderr=True)
             )
 
             try:
@@ -78,18 +89,32 @@ class Exporter(QObject):
                 self.error_occurred.emit(f"FFmpeg encoding failed: {stderr_output or str(e)}")
                 return
             finally:
+                print(f"[{time.strftime('%H:%M:%S')}] [Export] Closing FFmpeg stdin...")
                 try:
                     process.stdin.close()
+                except Exception as e:
+                    print(f"[{time.strftime('%H:%M:%S')}] [Export] Error closing stdin: {e}")
+                print(f"[{time.strftime('%H:%M:%S')}] [Export] Waiting for FFmpeg to finish...")
+                try:
+                    return_code = process.wait(timeout=30)
+                    print(f"[{time.strftime('%H:%M:%S')}] [Export] FFmpeg exited with code {return_code}")
+                    if return_code != 0 and process.stderr:
+                        stderr_output = process.stderr.read().decode()
+                        print(f"[{time.strftime('%H:%M:%S')}] [Export] FFmpeg error: {stderr_output[-500:]}")
+                except subprocess.TimeoutExpired:
+                    print(f"[{time.strftime('%H:%M:%S')}] [Export] FFmpeg timed out, killing...")
+                    process.kill()
                     process.wait()
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"[{time.strftime('%H:%M:%S')}] [Export] Error waiting for FFmpeg: {e}")
 
             if self._cancel:
                 return
 
             # 3. Mux audio and video
             final_path = self.output_path
-            if os.path.exists(audio_path):
+            actual_has_audio = has_audio and os.path.exists(audio_path) and os.path.getsize(audio_path) > 0
+            if actual_has_audio:
                 # Mix them
                 try:
                     video_stream = ffmpeg.input(temp_video)
