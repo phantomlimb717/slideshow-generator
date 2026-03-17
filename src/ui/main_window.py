@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QFrame, QFileDialog, QMessageBox, QProgressDialog
 )
 from PySide6.QtCore import Qt, QSize, QUrl, QTimer, Signal, QThread, QEvent
-from PySide6.QtGui import QIcon, QAction, QPixmap, QImage, QPainter, QColor
+from PySide6.QtGui import QIcon, QAction, QPixmap, QImage, QPainter, QColor, QPalette
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PIL import ImageQt
@@ -167,6 +167,13 @@ class MainWindow(QMainWindow):
         preview_layout = QVBoxLayout(preview_frame)
 
         self.video_widget = QVideoWidget()
+        self.video_widget.setAspectRatioMode(Qt.AspectRatioMode.KeepAspectRatio)
+
+        palette = self.video_widget.palette()
+        palette.setColor(QPalette.Window, QColor("#1e1e1e"))
+        self.video_widget.setPalette(palette)
+        self.video_widget.setAttribute(Qt.WA_OpaquePaintEvent)
+
         preview_layout.addWidget(self.video_widget)
 
         self.audio_output = QAudioOutput()
