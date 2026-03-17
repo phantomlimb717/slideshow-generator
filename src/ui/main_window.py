@@ -253,7 +253,7 @@ class MainWindow(QMainWindow):
         # Install event filter to keep overlay positioned and sized correctly
         preview_frame.installEventFilter(self)
 
-        center_layout.addWidget(preview_frame, stretch=2)
+        center_layout.addWidget(preview_frame, stretch=3)
 
         # Timeline
         timeline_header = QHBoxLayout()
@@ -315,7 +315,7 @@ class MainWindow(QMainWindow):
 
         # --- Right Panel: Inspector ---
         right_panel = QWidget()
-        right_panel.setMinimumWidth(300)
+        right_panel.setMinimumWidth(250)
         right_layout = QVBoxLayout(right_panel)
         right_layout.addWidget(QLabel("Inspector"))
 
@@ -429,7 +429,7 @@ class MainWindow(QMainWindow):
         right_layout.addStretch()
 
         main_splitter.addWidget(right_panel)
-        main_splitter.setSizes([300, 600, 300])
+        main_splitter.setSizes([200, 750, 250])
 
         self._updating_inspector = False # guard flag to prevent feedback loops
 
