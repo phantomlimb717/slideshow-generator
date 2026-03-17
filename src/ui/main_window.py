@@ -13,6 +13,40 @@ from PySide6.QtMultimediaWidgets import QVideoWidget
 from PIL import ImageQt
 
 from models.project import Project, SlideItem, MediaType, EffectPreset, AudioItem
+
+
+class AspectRatioContainer(QWidget):
+    """A container widget that constrains its child to a 16:9 aspect ratio."""
+    def __init__(self, child_widget, parent=None):
+        super().__init__(parent)
+        self.child_widget = child_widget
+        self.child_widget.setParent(self)
+        self.setStyleSheet("background-color: #1e1e1e;")
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._reposition_child()
+
+    def _reposition_child(self):
+        w = self.width()
+        h = self.height()
+        target_ratio = 16 / 9
+
+        # Calculate largest 16:9 rect that fits
+        if w / max(1, h) > target_ratio:
+            # Container is wider than 16:9 — constrain by height
+            child_h = h
+            child_w = int(h * target_ratio)
+        else:
+            # Container is taller than 16:9 — constrain by width
+            child_w = w
+            child_h = int(w / target_ratio)
+
+        # Center the child
+        x = (w - child_w) // 2
+        y = (h - child_h) // 2
+        self.child_widget.setGeometry(x, y, child_w, child_h)
+
 from utils.media_import import scan_directory_for_media, extract_thumbnail
 from rendering.preview import PreviewGenerator
 from export.exporter import Exporter
@@ -168,11 +202,8 @@ class MainWindow(QMainWindow):
 
         self.video_widget = QVideoWidget()
         self.video_widget.setAspectRatioMode(Qt.AspectRatioMode.KeepAspectRatio)
-        palette = self.video_widget.palette()
-        palette.setColor(QPalette.Window, QColor("#1e1e1e"))
-        self.video_widget.setPalette(palette)
-        self.video_widget.setAttribute(Qt.WA_OpaquePaintEvent)
-        preview_layout.addWidget(self.video_widget)
+        self.video_container = AspectRatioContainer(self.video_widget)
+        preview_layout.addWidget(self.video_container)
 
         self.audio_output = QAudioOutput()
         self.media_player = QMediaPlayer()
@@ -403,10 +434,10 @@ class MainWindow(QMainWindow):
         self._updating_inspector = False # guard flag to prevent feedback loops
 
     def eventFilter(self, source, event):
-        if hasattr(self, 'video_widget') and source is self.video_widget.parent():
+        if hasattr(self, 'video_container') and source is self.video_container.parent():
             if event.type() == QEvent.Resize:
                 # Reposition the overlay to cover the video widget area
-                self.gen_overlay.setGeometry(self.video_widget.geometry())
+                self.gen_overlay.setGeometry(self.video_container.geometry())
         return super().eventFilter(source, event)
 
     def _create_section_header(self, text):
