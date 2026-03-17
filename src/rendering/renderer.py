@@ -200,7 +200,10 @@ class SlideshowRenderer:
         return resized
 
     def generate_slide_frames(self, slide: SlideItem) -> Generator[np.ndarray, None, None]:
+        import time
         """Generates all fully rendered frames for a single slide sequentially."""
+        print(f"[{time.strftime('%H:%M:%S')}] [Renderer] Processing slide: {slide.media_path} ({slide.media_type.value}, {slide.duration}s, effect={slide.effect_preset.value})")
+
         num_frames = int(slide.duration * self.fps)
 
         media_path = slide.video_path if (slide.media_type == MediaType.LIVE_PHOTO and slide.use_video_clip) else slide.media_path
@@ -214,6 +217,9 @@ class SlideshowRenderer:
 
             yielded_frames = 0
             for i, frame in enumerate(frame_gen):
+                if i % 30 == 0:
+                    print(f"[{time.strftime('%H:%M:%S')}] [Renderer] Extracting video frame {i}/{num_frames} from {media_path}")
+
                 if i >= num_frames:
                     break
                 # Apply crop to aspect and ken burns (even to video if desired, though usually static)
@@ -228,6 +234,7 @@ class SlideshowRenderer:
         else:
             # Image handling
             raw_img = self._get_image_data(media_path)
+            print(f"[{time.strftime('%H:%M:%S')}] [Renderer] Image loaded: {raw_img.shape}")
             cropped = self._crop_to_aspect(raw_img, slide.focal_point[0], slide.focal_point[1])
 
             for i in range(num_frames):

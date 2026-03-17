@@ -60,15 +60,25 @@ class PreviewGenerator(QObject):
         self._thread.start()
 
     def _run_generation(self):
+        import time
         try:
+            # At the start:
+            print(f"[{time.strftime('%H:%M:%S')}] [Preview] Starting generation for {len(self.project.slides)} slides")
+            start_time = time.time()
+
             # 1. Generate audio mix
+            print(f"[{time.strftime('%H:%M:%S')}] [Preview] Building audio mix...")
+            t = time.time()
             audio_path = os.path.join(self.temp_dir, "preview_audio.wav")
             build_audio_mix(self.project, audio_path)
+            print(f"[{time.strftime('%H:%M:%S')}] [Preview] Audio mix complete ({time.time()-t:.1f}s)")
 
             if self._cancel:
                 return
 
             # 2. Render frames (Proxy Resolution 640x360 @ 30fps)
+            print(f"[{time.strftime('%H:%M:%S')}] [Preview] Rendering {len(self.project.slides)} slides at 640x360 @ 30fps")
+            t = time.time()
             renderer = SlideshowRenderer(self.project, fps=30, resolution=(640, 360))
             video_path = os.path.join(self.temp_dir, "preview_video.mp4")
 
@@ -88,9 +98,13 @@ class PreviewGenerator(QObject):
 
                     process.stdin.write(frame_data.tobytes())
 
+                    if frame_idx % 30 == 0:
+                        print(f"[{time.strftime('%H:%M:%S')}] [Preview] Frame {frame_idx}/{total_frames} ({int(frame_idx/max(1,total_frames)*100)}%)")
+
                     # Update progress
                     progress = int((frame_idx / max(1, total_frames)) * 100)
                     self.progress_updated.emit(progress)
+                print(f"[{time.strftime('%H:%M:%S')}] [Preview] Frame rendering complete ({time.time()-t:.1f}s)")
             except (BrokenPipeError, OSError) as e:
                 stderr_output = ""
                 try:
@@ -110,6 +124,8 @@ class PreviewGenerator(QObject):
                 return
 
             # 3. Mux audio and video
+            print(f"[{time.strftime('%H:%M:%S')}] [Preview] Muxing audio and video...")
+            t = time.time()
             final_path = os.path.join(self.temp_dir, "preview_final.mp4")
             if os.path.exists(audio_path):
                 # Mix them
@@ -130,6 +146,9 @@ class PreviewGenerator(QObject):
                 # No audio, just copy video
                 import shutil
                 shutil.copy(video_path, final_path)
+
+            print(f"[{time.strftime('%H:%M:%S')}] [Preview] Mux complete ({time.time()-t:.1f}s)")
+            print(f"[{time.strftime('%H:%M:%S')}] [Preview] Total generation time: {time.time()-start_time:.1f}s")
 
             self.preview_ready.emit(final_path)
 

@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QSpinBox, QDoubleSpinBox, QCheckBox, QListWidget, QListWidgetItem,
     QFrame, QFileDialog, QMessageBox, QProgressDialog
 )
-from PySide6.QtCore import Qt, QSize, QUrl, QTimer, Signal, QThread
+from PySide6.QtCore import Qt, QSize, QUrl, QTimer, Signal, QThread, QEvent
 from PySide6.QtGui import QIcon, QAction, QPixmap, QImage, QPainter, QColor
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtMultimediaWidgets import QVideoWidget
@@ -95,12 +95,13 @@ class MediaLibraryWidget(QListWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Family Memories Slideshow Generator")
+        self.base_title = "Family Memories Slideshow Generator"
+        self.setWindowTitle(self.base_title)
         self.setMinimumSize(1200, 800)
 
         self.project = Project()
         self.media_library: list[SlideItem] = []
-        self.is_dirty = False
+        self._is_dirty = False
         self.current_project_path = None
 
         self.preview_generator = None
@@ -111,7 +112,20 @@ class MainWindow(QMainWindow):
         self.apply_dark_theme()
 
         # Initial state setup
+        self.statusBar().showMessage("Ready")
         self.update_inspector_state(None)
+
+    @property
+    def is_dirty(self):
+        return self._is_dirty
+
+    @is_dirty.setter
+    def is_dirty(self, value):
+        self._is_dirty = value
+        if self._is_dirty:
+            self.setWindowTitle(self.base_title + " *")
+        else:
+            self.setWindowTitle(self.base_title)
 
     def setup_ui(self):
         central_widget = QWidget()
@@ -130,6 +144,7 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(QLabel("Media Library (Drag & Drop)"))
 
         self.media_list = MediaLibraryWidget()
+        self.media_list.setIconSize(QSize(160, 90))
         self.media_list.filesDropped.connect(self.handle_files_dropped)
         left_layout.addWidget(self.media_list)
 
@@ -168,10 +183,12 @@ class MainWindow(QMainWindow):
         controls_layout = QHBoxLayout()
         self.btn_play_pause = QPushButton("Play")
         self.btn_play_pause.clicked.connect(self.toggle_play_pause)
+        self.btn_play_pause.setEnabled(False)
         controls_layout.addWidget(self.btn_play_pause)
 
         self.scrubber = QSlider(Qt.Horizontal)
         self.scrubber.sliderMoved.connect(self.set_position)
+        self.scrubber.setEnabled(False)
         controls_layout.addWidget(self.scrubber)
 
         self.time_label = QLabel("00:00 / 00:00")
@@ -180,13 +197,13 @@ class MainWindow(QMainWindow):
         preview_layout.addLayout(controls_layout)
 
         # Generation overlay
-        self.gen_overlay = QWidget()
-        self.gen_overlay.setStyleSheet("background-color: #2d2d30; border-radius: 5px;")
+        self.gen_overlay = QWidget(preview_frame)
+        self.gen_overlay.setStyleSheet("background-color: rgba(30, 30, 30, 220); border-radius: 5px;")
         gen_layout = QVBoxLayout(self.gen_overlay)
         gen_layout.setAlignment(Qt.AlignCenter)
 
         self.gen_label = QLabel("Generating preview...")
-        self.gen_label.setStyleSheet("color: white; padding: 10px; font-weight: bold;")
+        self.gen_label.setStyleSheet("color: white; padding: 10px; font-weight: bold; background-color: transparent;")
         self.gen_label.setAlignment(Qt.AlignCenter)
         gen_layout.addWidget(self.gen_label)
 
@@ -196,9 +213,9 @@ class MainWindow(QMainWindow):
         gen_layout.addWidget(self.btn_cancel_preview, alignment=Qt.AlignCenter)
 
         self.gen_overlay.hide()
-        # Overlay hack: put it in the same layout but we'd need a layered layout to really float it.
-        # For simplicity, we just put it below the video widget and show/hide.
-        preview_layout.addWidget(self.gen_overlay)
+
+        # Install event filter to keep overlay positioned and sized correctly
+        preview_frame.installEventFilter(self)
 
         center_layout.addWidget(preview_frame, stretch=2)
 
@@ -224,8 +241,8 @@ class MainWindow(QMainWindow):
         self.timeline_list = ListWidgetDraggable()
         self.timeline_list.setFlow(QListWidget.LeftToRight)
         self.timeline_list.setWrapping(False)
-        self.timeline_list.setMinimumHeight(150)
-        self.timeline_list.setIconSize(QSize(120, 68))
+        self.timeline_list.setMinimumHeight(180)
+        self.timeline_list.setIconSize(QSize(140, 80))
         self.timeline_list.setViewMode(QListWidget.IconMode)
         self.timeline_list.setDragDropMode(QListWidget.InternalMove)
         self.timeline_list.itemsDropped.connect(self.sync_timeline_order)
@@ -270,6 +287,8 @@ class MainWindow(QMainWindow):
         slide_props_frame.setFrameShape(QFrame.StyledPanel)
         slide_props_layout = QVBoxLayout(slide_props_frame)
 
+        slide_props_layout.addWidget(self._create_section_header("Effect & Motion"))
+
         slide_props_layout.addWidget(QLabel("Effect Preset:"))
         self.effect_combo = QComboBox()
         self.effect_combo.addItems([e.value for e in EffectPreset])
@@ -302,6 +321,8 @@ class MainWindow(QMainWindow):
         focal_layout.addWidget(self.focal_y)
         slide_props_layout.addLayout(focal_layout)
 
+        slide_props_layout.addWidget(self._create_section_header("Timing"))
+
         dur_layout = QHBoxLayout()
         dur_layout.addWidget(QLabel("Duration (s):"))
         self.duration_spin = QDoubleSpinBox()
@@ -332,6 +353,7 @@ class MainWindow(QMainWindow):
         self.lp_group = QWidget()
         lp_layout = QVBoxLayout(self.lp_group)
         lp_layout.setContentsMargins(0, 0, 0, 0)
+        lp_layout.addWidget(self._create_section_header("Live Photo"))
         self.cb_use_video = QCheckBox("Use Video Clip (Live Photo)")
         self.cb_use_video.stateChanged.connect(self.inspector_changed)
         lp_layout.addWidget(self.cb_use_video)
@@ -341,6 +363,7 @@ class MainWindow(QMainWindow):
         self.video_group = QWidget()
         video_layout = QVBoxLayout(self.video_group)
         video_layout.setContentsMargins(0, 0, 0, 0)
+        video_layout.addWidget(self._create_section_header("Video Audio"))
 
         trim_layout = QHBoxLayout()
         trim_layout.addWidget(QLabel("Trim Start (s):"))
@@ -373,6 +396,18 @@ class MainWindow(QMainWindow):
         main_splitter.setSizes([300, 600, 300])
 
         self._updating_inspector = False # guard flag to prevent feedback loops
+
+    def eventFilter(self, source, event):
+        if hasattr(self, 'video_widget') and source is self.video_widget.parent():
+            if event.type() == QEvent.Resize:
+                # Reposition the overlay to cover the video widget area
+                self.gen_overlay.setGeometry(self.video_widget.geometry())
+        return super().eventFilter(source, event)
+
+    def _create_section_header(self, text):
+        label = QLabel(text)
+        label.setStyleSheet("color: #007acc; font-weight: bold; font-size: 11px; padding-top: 8px; border-bottom: 1px solid #3e3e42; padding-bottom: 4px;")
+        return label
 
     def setup_toolbar(self):
         toolbar = QToolBar("Main Toolbar")
@@ -423,6 +458,7 @@ class MainWindow(QMainWindow):
         QMainWindow { background-color: #1e1e1e; color: #d4d4d4; }
         QWidget { background-color: #1e1e1e; color: #d4d4d4; font-family: "Segoe UI", sans-serif; }
         QListWidget { background-color: #252526; border: 1px solid #3e3e42; }
+        QListWidget::item { padding: 4px; }
         QListWidget::item:selected { background-color: #007acc; color: white; }
         QLabel { color: #cccccc; }
         QPushButton { background-color: #3f3f46; border: 1px solid #555555; padding: 5px 15px; border-radius: 3px; }
@@ -492,6 +528,7 @@ class MainWindow(QMainWindow):
 
         self.media_library.extend(slides)
         self.refresh_media_list()
+        self.statusBar().showMessage(f"Added {len(slides)} slides to library")
 
     def refresh_media_list(self):
         self.media_list.clear()
@@ -577,7 +614,7 @@ class MainWindow(QMainWindow):
             item = QListWidgetItem()
 
             # Create a solid gray placeholder pixmap matching #2d2d30
-            placeholder = QPixmap(120, 68)
+            placeholder = QPixmap(140, 80)
             placeholder.fill(QColor("#2d2d30"))
             item.setIcon(QIcon(placeholder))
 
@@ -585,7 +622,7 @@ class MainWindow(QMainWindow):
             if slide.media_type == MediaType.LIVE_PHOTO and slide.use_video_clip and slide.video_path:
                 thumb_path = slide.video_path
 
-            items_to_process.append((index, thumb_path, (120, 68), 'timeline'))
+            items_to_process.append((index, thumb_path, (140, 80), 'timeline'))
 
             dur_str = f"{slide.duration:.1f}s"
             item.setText(f"{dur_str}\n{slide.effect_preset.value}")
@@ -885,13 +922,21 @@ class MainWindow(QMainWindow):
 
     # --- Preview Methods ---
     def trigger_preview_generation(self):
+        import time
+        print(f"[{time.strftime('%H:%M:%S')}] [UI] Preview generation triggered with {len(self.project.slides)} slides")
         if not self.project.slides:
             # Stop playback, clear video
             self.media_player.stop()
             self.media_player.setSource(QUrl())
+            self.btn_play_pause.setText("Play")
+            self.btn_play_pause.setEnabled(False)
+            self.scrubber.setEnabled(False)
             return
 
         self.media_player.pause()
+        self.btn_play_pause.setText("Play")
+        self.btn_play_pause.setEnabled(False)
+        self.scrubber.setEnabled(False)
         self.gen_overlay.show()
 
         if self.preview_generator:
@@ -903,16 +948,26 @@ class MainWindow(QMainWindow):
         self.preview_generator.generate()
 
     def on_preview_ready(self, video_path):
+        import time
+        print(f"[{time.strftime('%H:%M:%S')}] [UI] Preview ready: {video_path}")
+        total_duration = self.project.get_total_duration()
+        self.statusBar().showMessage(f"Preview ready — {total_duration:.1f}s slideshow")
         self.gen_overlay.hide()
         self.media_player.setSource(QUrl.fromLocalFile(video_path))
+        self.btn_play_pause.setEnabled(True)
+        self.scrubber.setEnabled(True)
         self.media_player.play()
         self.btn_play_pause.setText("Pause")
 
     def on_preview_error(self, err_msg):
+        import time
+        print(f"[{time.strftime('%H:%M:%S')}] [UI] Preview error: {err_msg}")
         self.gen_overlay.hide()
         print(f"Preview Generation Error: {err_msg}")
 
     def cancel_preview_generation(self):
+        import time
+        print(f"[{time.strftime('%H:%M:%S')}] [UI] Preview cancelled by user")
         if self.preview_generator:
             self.preview_generator.cancel()
         self.gen_overlay.hide()
@@ -978,6 +1033,7 @@ class MainWindow(QMainWindow):
 
     def on_export_complete(self, path):
         self.export_dlg.accept()
+        self.statusBar().showMessage(f"Exported to {path}")
         QMessageBox.information(self, "Export Complete", f"Slideshow exported successfully to:\n{path}")
 
     def on_export_error(self, err):
