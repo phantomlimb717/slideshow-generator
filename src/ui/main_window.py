@@ -610,7 +610,13 @@ class MainWindow(QMainWindow):
         QPushButton:pressed { background-color: #007acc; }
         QSlider::groove:horizontal { border: 1px solid #3e3e42; height: 8px; background: #2d2d30; margin: 2px 0; }
         QSlider::handle:horizontal { background: #007acc; width: 14px; margin: -4px 0; border-radius: 7px; }
-        QComboBox, QSpinBox, QDoubleSpinBox { background-color: #333337; border: 1px solid #3e3e42; color: white; padding: 2px; }
+        QComboBox, QSpinBox, QDoubleSpinBox { background-color: #333337; border: 1px solid #3e3e42; color: white; padding: 2px; min-height: 24px; }
+        QSpinBox::up-button, QDoubleSpinBox::up-button { width: 20px; border-left: 1px solid #3e3e42; background-color: #3f3f46; }
+        QSpinBox::down-button, QDoubleSpinBox::down-button { width: 20px; border-left: 1px solid #3e3e42; background-color: #3f3f46; }
+        QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover { background-color: #4f4f56; }
+        QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover { background-color: #4f4f56; }
+        QSpinBox::up-arrow, QDoubleSpinBox::up-arrow { image: none; border-left: 4px solid transparent; border-right: 4px solid transparent; border-bottom: 5px solid #cccccc; width: 0; height: 0; }
+        QSpinBox::down-arrow, QDoubleSpinBox::down-arrow { image: none; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid #cccccc; width: 0; height: 0; }
         QToolBar { background-color: #2d2d30; border-bottom: 1px solid #1e1e1e; }
         QSplitter::handle { background-color: #3e3e42; }
         """
