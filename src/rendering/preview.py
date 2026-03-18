@@ -92,6 +92,7 @@ class PreviewGenerator(QObject):
             video_path = os.path.join(self.temp_dir, "preview_video.mp4")
 
             # Use ffmpeg-python to create a subprocess for writing frames
+            stderr_output = []
             process = (
                 ffmpeg
                 .input('pipe:', format='rawvideo', pix_fmt='rgb24', s=f'640x360', r=30)
@@ -99,6 +100,23 @@ class PreviewGenerator(QObject):
                 .overwrite_output()
                 .run_async(pipe_stdin=True, pipe_stderr=True)
             )
+
+            def read_stderr():
+                try:
+                    # FFmpeg uses \r for progress, so we read chunks to avoid massive lines
+                    while True:
+                        chunk = process.stderr.read(4096)
+                        if not chunk:
+                            break
+                        stderr_output.append(chunk.decode(errors='replace'))
+                        # Keep only last ~40KB to avoid memory bloat
+                        if len(stderr_output) > 10:
+                            stderr_output.pop(0)
+                except Exception:
+                    pass
+
+            stderr_thread = threading.Thread(target=read_stderr, daemon=True)
+            stderr_thread.start()
 
             try:
                 for frame_idx, total_frames, frame_data in renderer.render_project():
@@ -115,12 +133,10 @@ class PreviewGenerator(QObject):
                     self.progress_updated.emit(progress)
                 print(f"[{time.strftime('%H:%M:%S')}] [Preview] Frame rendering complete ({time.time()-t:.1f}s)")
             except (BrokenPipeError, OSError) as e:
-                stderr_output = ""
-                try:
-                    stderr_output = process.stderr.read().decode()
-                except Exception:
-                    pass
-                self.error_occurred.emit(f"FFmpeg encoding failed: {stderr_output or str(e)}")
+                if 'stderr_thread' in locals() and stderr_thread.is_alive():
+                    stderr_thread.join(timeout=1.0)
+                err_str = "".join(stderr_output) if 'stderr_output' in locals() else ""
+                self.error_occurred.emit(f"FFmpeg encoding failed: {err_str or str(e)}")
                 return
             finally:
                 print(f"[{time.strftime('%H:%M:%S')}] [Preview] Closing FFmpeg stdin...")
@@ -129,20 +145,15 @@ class PreviewGenerator(QObject):
                 except Exception as e:
                     print(f"[{time.strftime('%H:%M:%S')}] [Preview] Error closing stdin: {e}")
 
-                # Drain stderr to prevent pipe buffer deadlock
-                stderr_output = ""
-                try:
-                    if process.stderr:
-                        stderr_output = process.stderr.read().decode()
-                except Exception:
-                    pass
-
                 print(f"[{time.strftime('%H:%M:%S')}] [Preview] Waiting for FFmpeg to finish...")
                 try:
                     return_code = process.wait(timeout=10)
                     print(f"[{time.strftime('%H:%M:%S')}] [Preview] FFmpeg exited with code {return_code}")
                     if return_code != 0:
-                        print(f"[{time.strftime('%H:%M:%S')}] [Preview] FFmpeg error: {stderr_output[-500:]}")
+                        if 'stderr_thread' in locals() and stderr_thread.is_alive():
+                            stderr_thread.join(timeout=1.0)
+                        err_str = "".join(stderr_output) if 'stderr_output' in locals() else ""
+                        print(f"[{time.strftime('%H:%M:%S')}] [Preview] FFmpeg error: {err_str[-500:]}")
                 except subprocess.TimeoutExpired:
                     print(f"[{time.strftime('%H:%M:%S')}] [Preview] FFmpeg timed out, killing...")
                     process.kill()

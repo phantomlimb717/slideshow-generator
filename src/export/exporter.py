@@ -62,6 +62,7 @@ class Exporter(QObject):
 
             # Use ffmpeg-python to create a subprocess for writing frames
             temp_video = os.path.join(self.temp_dir, "temp_video.mp4")
+            stderr_output = []
             process = (
                 ffmpeg
                 .input('pipe:', format='rawvideo', pix_fmt='rgb24', s=f'{self.resolution[0]}x{self.resolution[1]}', r=self.fps)
@@ -69,6 +70,21 @@ class Exporter(QObject):
                 .overwrite_output()
                 .run_async(pipe_stdin=True, pipe_stderr=True)
             )
+
+            def read_stderr():
+                try:
+                    while True:
+                        chunk = process.stderr.read(4096)
+                        if not chunk:
+                            break
+                        stderr_output.append(chunk.decode(errors='replace'))
+                        if len(stderr_output) > 10:
+                            stderr_output.pop(0)
+                except Exception:
+                    pass
+
+            stderr_thread = threading.Thread(target=read_stderr, daemon=True)
+            stderr_thread.start()
 
             try:
                 for frame_idx, total_frames, frame_data in renderer.render_project():
@@ -81,12 +97,10 @@ class Exporter(QObject):
                     progress = int((frame_idx / max(1, total_frames)) * 100)
                     self.progress_updated.emit(progress)
             except (BrokenPipeError, OSError) as e:
-                stderr_output = ""
-                try:
-                    stderr_output = process.stderr.read().decode()
-                except Exception:
-                    pass
-                self.error_occurred.emit(f"FFmpeg encoding failed: {stderr_output or str(e)}")
+                if 'stderr_thread' in locals() and stderr_thread.is_alive():
+                    stderr_thread.join(timeout=1.0)
+                err_str = "".join(stderr_output) if 'stderr_output' in locals() else ""
+                self.error_occurred.emit(f"FFmpeg encoding failed: {err_str or str(e)}")
                 return
             finally:
                 print(f"[{time.strftime('%H:%M:%S')}] [Export] Closing FFmpeg stdin...")
@@ -95,20 +109,15 @@ class Exporter(QObject):
                 except Exception as e:
                     print(f"[{time.strftime('%H:%M:%S')}] [Export] Error closing stdin: {e}")
 
-                # Drain stderr to prevent pipe buffer deadlock
-                stderr_output = ""
-                try:
-                    if process.stderr:
-                        stderr_output = process.stderr.read().decode()
-                except Exception:
-                    pass
-
                 print(f"[{time.strftime('%H:%M:%S')}] [Export] Waiting for FFmpeg to finish...")
                 try:
                     return_code = process.wait(timeout=10)
                     print(f"[{time.strftime('%H:%M:%S')}] [Export] FFmpeg exited with code {return_code}")
                     if return_code != 0:
-                        print(f"[{time.strftime('%H:%M:%S')}] [Export] FFmpeg error: {stderr_output[-500:]}")
+                        if 'stderr_thread' in locals() and stderr_thread.is_alive():
+                            stderr_thread.join(timeout=1.0)
+                        err_str = "".join(stderr_output) if 'stderr_output' in locals() else ""
+                        print(f"[{time.strftime('%H:%M:%S')}] [Export] FFmpeg error: {err_str[-500:]}")
                 except subprocess.TimeoutExpired:
                     print(f"[{time.strftime('%H:%M:%S')}] [Export] FFmpeg timed out, killing...")
                     process.kill()
