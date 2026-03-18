@@ -177,23 +177,31 @@ class SlideshowRenderer:
         cx = ox1 + (ox2 - ox1) * eased_p
         cy = oy1 + (oy2 - oy1) * eased_p
 
-        # Calculate crop window
-        crop_w = int(w / current_zoom)
-        crop_h = int(h / current_zoom)
+        # Calculate crop window with floating point precision to avoid jitter
+        crop_w = w / current_zoom
+        crop_h = h / current_zoom
 
-        x1 = int(w * cx - crop_w / 2)
-        y1 = int(h * cy - crop_h / 2)
+        x1 = w * cx - crop_w / 2.0
+        y1 = h * cy - crop_h / 2.0
 
         # Clamp bounds
-        x1 = max(0, min(x1, w - crop_w))
-        y1 = max(0, min(y1, h - crop_h))
-        x2 = x1 + crop_w
-        y2 = y1 + crop_h
+        x1 = max(0.0, min(x1, w - crop_w))
+        y1 = max(0.0, min(y1, h - crop_h))
 
-        cropped = img[y1:y2, x1:x2]
+        # Use an affine transformation for sub-pixel interpolation instead of integer array slicing
+        dst_w, dst_h = self.resolution
+        scale_x = dst_w / crop_w
+        scale_y = dst_h / crop_h
+        tx = -x1 * scale_x
+        ty = -y1 * scale_y
 
-        # Resize to target resolution
-        resized = cv2.resize(cropped, self.resolution, interpolation=cv2.INTER_LANCZOS4)
+        M = np.array([
+            [scale_x, 0, tx],
+            [0, scale_y, ty]
+        ], dtype=np.float32)
+
+        # Warp the image directly to the target resolution using Lanczos interpolation
+        resized = cv2.warpAffine(img, M, (dst_w, dst_h), flags=cv2.INTER_LANCZOS4)
         return resized
 
     def generate_slide_frames(self, slide: SlideItem, fade_in_duration: float = 0.0, fade_out_duration: float = 0.0) -> Generator[np.ndarray, None, None]:
