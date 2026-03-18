@@ -536,6 +536,30 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(slide_props_frame)
         right_layout.addStretch()
 
+        # --- Auto-apply Effects Section ---
+        auto_apply_frame = QFrame()
+        auto_apply_frame.setFrameShape(QFrame.StyledPanel)
+        auto_apply_layout = QVBoxLayout(auto_apply_frame)
+        auto_apply_layout.addWidget(self._create_section_header("Auto-apply Effects"))
+
+        info_label = QLabel("Apply randomly to static slides:")
+        info_label.setWordWrap(True)
+        auto_apply_layout.addWidget(info_label)
+
+        self.auto_apply_checkboxes = {}
+        for effect in EffectPreset:
+            if effect == EffectPreset.STATIC:
+                continue
+            cb = QCheckBox(effect.value)
+            self.auto_apply_checkboxes[effect] = cb
+            auto_apply_layout.addWidget(cb)
+
+        self.btn_auto_apply = QPushButton("Apply to Static Slides")
+        self.btn_auto_apply.clicked.connect(self.apply_auto_effects)
+        auto_apply_layout.addWidget(self.btn_auto_apply)
+
+        right_layout.addWidget(auto_apply_frame)
+
         main_splitter.addWidget(right_panel)
         main_splitter.setSizes([200, 750, 250])
 
@@ -994,6 +1018,45 @@ class MainWindow(QMainWindow):
         self.update_inspector_state(slide)
 
         self.is_dirty = True
+
+    def apply_auto_effects(self):
+        selected_effects = [effect for effect, cb in self.auto_apply_checkboxes.items() if cb.isChecked()]
+
+        if not selected_effects:
+            QMessageBox.information(self, "No Effects Selected", "Please select at least one effect to apply.")
+            return
+
+        static_slides = [slide for slide in self.project.slides if slide.effect_preset == EffectPreset.STATIC]
+
+        if not static_slides:
+            QMessageBox.information(self, "No Static Slides", "There are no static slides in the timeline.")
+            return
+
+        import random
+        # Create a list of effects to apply, ensuring even distribution
+        effects_to_apply = []
+        while len(effects_to_apply) < len(static_slides):
+            effects_to_apply.extend(selected_effects)
+
+        # Shuffle the list of effects so they are applied randomly
+        # We slice it to match the exact number of static slides
+        effects_to_apply = effects_to_apply[:len(static_slides)]
+        random.shuffle(effects_to_apply)
+
+        # Apply the effects
+        for slide, effect in zip(static_slides, effects_to_apply):
+            slide.effect_preset = effect
+
+        self.refresh_timeline()
+        self.is_dirty = True
+
+        # If a slide is selected, update the inspector as well
+        items = self.timeline_list.selectedItems()
+        if items:
+            slide = items[0].data(Qt.UserRole)
+            self.update_inspector_state(slide)
+
+        QMessageBox.information(self, "Effects Applied", f"Applied random effects to {len(static_slides)} slides.")
 
     # --- Project Save/Load Methods ---
     def check_unsaved_changes(self) -> bool:
