@@ -1162,19 +1162,20 @@ class MainWindow(QMainWindow):
             return
 
         import random
-        # Create a list of effects to apply, ensuring even distribution
-        effects_to_apply = []
-        while len(effects_to_apply) < len(static_slides):
-            effects_to_apply.extend(selected_effects)
 
-        # Shuffle the list of effects so they are applied randomly
-        # We slice it to match the exact number of static slides
-        effects_to_apply = effects_to_apply[:len(static_slides)]
-        random.shuffle(effects_to_apply)
+        # Apply the effects ensuring we don't repeat the same effect sequentially
+        # if more than one effect is selected
+        last_effect = None
+        for slide in static_slides:
+            if len(selected_effects) > 1 and last_effect is not None:
+                # Pick a random effect that isn't the last one
+                available_effects = [e for e in selected_effects if e != last_effect]
+                effect = random.choice(available_effects)
+            else:
+                effect = random.choice(selected_effects)
 
-        # Apply the effects
-        for slide, effect in zip(static_slides, effects_to_apply):
             slide.effect_preset = effect
+            last_effect = effect
 
         self.refresh_timeline()
         self.is_dirty = True
