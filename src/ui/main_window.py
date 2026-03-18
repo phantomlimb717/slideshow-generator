@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QToolBar, QSplitter, QLabel, QPushButton, QSlider, QComboBox,
     QSpinBox, QDoubleSpinBox, QCheckBox, QListWidget, QListWidgetItem,
     QFrame, QFileDialog, QMessageBox, QProgressDialog, QSizePolicy,
-    QStyledItemDelegate, QStyle
+    QStyledItemDelegate, QStyle, QMenu
 )
 from PySide6.QtCore import Qt, QSize, QUrl, QTimer, Signal, QThread, QEvent, QRect
 from PySide6.QtGui import QIcon, QAction, QPixmap, QImage, QPainter, QColor, QPalette
@@ -378,6 +378,11 @@ class MainWindow(QMainWindow):
         self.timeline_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.timeline_list.itemsDropped.connect(self.sync_timeline_order)
         self.timeline_list.itemSelectionChanged.connect(self.on_timeline_selection)
+
+        # Context menu
+        self.timeline_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.timeline_list.customContextMenuRequested.connect(self.show_timeline_context_menu)
+
         timeline_layout.addWidget(self.timeline_list)
 
         # Audio Track
@@ -790,6 +795,55 @@ class MainWindow(QMainWindow):
             if index < self.timeline_list.count():
                 item = self.timeline_list.item(index)
                 item.setIcon(QIcon(pixmap))
+
+    # --- Context Menu Methods ---
+    def show_timeline_context_menu(self, pos):
+        item = self.timeline_list.itemAt(pos)
+        if not item:
+            return
+
+        menu = QMenu(self)
+
+        act_send_front = QAction("Send to Front", self)
+        act_send_front.triggered.connect(lambda _, i=item: self.move_slide_to_front(i))
+        menu.addAction(act_send_front)
+
+        act_send_back = QAction("Send to Back", self)
+        act_send_back.triggered.connect(lambda _, i=item: self.move_slide_to_back(i))
+        menu.addAction(act_send_back)
+
+        menu.addSeparator()
+
+        act_delete = QAction("Delete Slide", self)
+        act_delete.triggered.connect(lambda _, i=item: self.delete_slide_context(i))
+        menu.addAction(act_delete)
+
+        menu.exec(self.timeline_list.viewport().mapToGlobal(pos))
+
+    def move_slide_to_front(self, item):
+        row = self.timeline_list.row(item)
+        if row > 0:
+            slide = self.project.slides.pop(row)
+            self.project.slides.insert(0, slide)
+            self.refresh_timeline()
+            self.timeline_list.setCurrentRow(0)
+            self.is_dirty = True
+
+    def move_slide_to_back(self, item):
+        row = self.timeline_list.row(item)
+        if row < self.timeline_list.count() - 1:
+            slide = self.project.slides.pop(row)
+            self.project.slides.append(slide)
+            self.refresh_timeline()
+            self.timeline_list.setCurrentRow(self.timeline_list.count() - 1)
+            self.is_dirty = True
+
+    def delete_slide_context(self, item):
+        row = self.timeline_list.row(item)
+        if 0 <= row < len(self.project.slides):
+            self.project.slides.pop(row)
+            self.refresh_timeline()
+            self.is_dirty = True
 
     # --- Timeline & Audio Methods ---
     def add_selected_to_timeline(self):
