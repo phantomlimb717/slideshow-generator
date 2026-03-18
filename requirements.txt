@@ -5,3 +5,5 @@ pydub>=0.25.1
 ffmpeg-python>=0.2.0
 opencv-python>=4.5.0
 numpy>=1.21.0
+insightface>=0.7.3
+onnxruntime-gpu>=1.17.0
