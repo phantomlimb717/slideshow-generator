@@ -48,6 +48,7 @@ class AudioItem:
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     file_path: str = ""
     duration: float = 0.0
+    volume: float = 1.0
 
 @dataclass
 class Project:
@@ -57,6 +58,7 @@ class Project:
     output_resolution: Tuple[int, int] = (1920, 1080)
     target_fps: int = 30
     backing_track_volume: float = 1.0  # 0.0 to 1.0
+    loop_backing_track: bool = True
 
     def get_total_duration(self) -> float:
         total = 0.0

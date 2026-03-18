@@ -386,7 +386,14 @@ class MainWindow(QMainWindow):
         btn_add_audio = QPushButton("Add Audio...")
         btn_add_audio.clicked.connect(self.add_audio_dialog)
         audio_header.addWidget(btn_add_audio)
+        btn_remove_audio = QPushButton("Remove Selected Audio")
+        btn_remove_audio.clicked.connect(self.remove_selected)
+        audio_header.addWidget(btn_remove_audio)
         audio_header.addStretch()
+        self.cb_loop_audio = QCheckBox("Loop Music")
+        self.cb_loop_audio.setChecked(True)
+        self.cb_loop_audio.stateChanged.connect(self.global_settings_changed)
+        audio_header.addWidget(self.cb_loop_audio)
         audio_header.addWidget(QLabel("Global Volume:"))
         self.global_audio_slider = QSlider(Qt.Horizontal)
         self.global_audio_slider.setRange(0, 100)
@@ -410,6 +417,7 @@ class MainWindow(QMainWindow):
         self.audio_list.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.audio_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.audio_list.itemsDropped.connect(self.sync_audio_order)
+        self.audio_list.itemSelectionChanged.connect(self.on_audio_selection)
         timeline_layout.addWidget(self.audio_list)
 
         center_splitter.addWidget(timeline_widget)
@@ -534,6 +542,30 @@ class MainWindow(QMainWindow):
         slide_props_layout.addWidget(self.video_group)
 
         right_layout.addWidget(slide_props_frame)
+
+        # --- Audio Track Properties ---
+        self.audio_props_frame = QFrame()
+        self.audio_props_frame.setFrameShape(QFrame.StyledPanel)
+        audio_props_layout = QVBoxLayout(self.audio_props_frame)
+        audio_props_layout.addWidget(self._create_section_header("Audio Track Settings"))
+
+        track_vol_layout = QHBoxLayout()
+        track_vol_layout.addWidget(QLabel("Track Volume:"))
+        self.track_vol_slider = QSlider(Qt.Horizontal)
+        self.track_vol_slider.setRange(0, 100)
+        self.track_vol_slider.setValue(100)
+        self.track_vol_slider.valueChanged.connect(self.audio_inspector_changed)
+        track_vol_layout.addWidget(self.track_vol_slider)
+
+        self.track_vol_label = QLabel("100%")
+        self.track_vol_slider.valueChanged.connect(lambda v: self.track_vol_label.setText(f"{v}%"))
+        track_vol_layout.addWidget(self.track_vol_label)
+
+        audio_props_layout.addLayout(track_vol_layout)
+        self.audio_props_frame.setVisible(False)
+
+        right_layout.addWidget(self.audio_props_frame)
+
         right_layout.addStretch()
 
         # --- Auto-apply Effects Section ---
@@ -890,7 +922,8 @@ class MainWindow(QMainWindow):
         self.audio_list.clear()
         for track in self.project.audio_tracks:
             item = QListWidgetItem()
-            item.setText(os.path.basename(track.file_path))
+            vol_pct = int(track.volume * 100)
+            item.setText(f"{os.path.basename(track.file_path)} ({vol_pct}%)")
             item.setData(Qt.UserRole, track)
             self.audio_list.addItem(item)
 
@@ -906,16 +939,58 @@ class MainWindow(QMainWindow):
     def global_settings_changed(self):
         self.project.backing_track_volume = self.global_audio_slider.value() / 100.0
         self.project.global_transition_duration = self.global_crossfade_spin.value()
+        self.project.loop_backing_track = self.cb_loop_audio.isChecked()
         self.is_dirty = True
 
     # --- Inspector Methods ---
     def on_timeline_selection(self):
         items = self.timeline_list.selectedItems()
         if items:
+            # Clear audio selection to avoid dual-inspector confusion
+            self.audio_list.clearSelection()
+            self.audio_props_frame.setVisible(False)
+
             slide = items[0].data(Qt.UserRole)
             self.update_inspector_state(slide)
         else:
             self.update_inspector_state(None)
+
+    def on_audio_selection(self):
+        items = self.audio_list.selectedItems()
+        if items:
+            # Clear timeline selection
+            self.timeline_list.clearSelection()
+            self.update_inspector_state(None)
+
+            track = items[0].data(Qt.UserRole)
+            self.update_audio_inspector(track)
+        else:
+            self.audio_props_frame.setVisible(False)
+
+    def update_audio_inspector(self, track: AudioItem):
+        self._updating_inspector = True
+        self.audio_props_frame.setVisible(True)
+        vol_pct = int(track.volume * 100)
+        self.track_vol_slider.setValue(vol_pct)
+        self.track_vol_label.setText(f"{vol_pct}%")
+        self._updating_inspector = False
+
+    def audio_inspector_changed(self):
+        if self._updating_inspector:
+            return
+
+        items = self.audio_list.selectedItems()
+        if not items:
+            return
+
+        track = items[0].data(Qt.UserRole)
+        track.volume = self.track_vol_slider.value() / 100.0
+
+        # Update text in the list widget to show new volume
+        vol_pct = int(track.volume * 100)
+        items[0].setText(f"{os.path.basename(track.file_path)} ({vol_pct}%)")
+
+        self.is_dirty = True
 
     def update_inspector_state(self, slide: SlideItem):
         self._updating_inspector = True

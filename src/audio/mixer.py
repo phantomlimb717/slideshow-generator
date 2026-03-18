@@ -22,35 +22,66 @@ def build_audio_mix(project: Project, output_path: str) -> Optional[str]:
     # 1. Assemble Backing Track
     if project.audio_tracks:
         backing_track = AudioSegment.empty()
+
+        # We need to process each track, apply individual volume, and add 5s fades.
+        # Tracks are separated by a 3s gap of silence.
+        fade_duration_ms = 5000
+        gap_duration_ms = 3000
+        silence_gap = AudioSegment.silent(duration=gap_duration_ms)
+
+        processed_tracks = []
+
         for track in project.audio_tracks:
             try:
                 segment = AudioSegment.from_file(track.file_path)
-                backing_track += segment
+
+                # Apply individual track volume
+                track_vol = max(0.01, track.volume)
+                if track_vol != 1.0:
+                    segment = segment + (20 * math.log10(track_vol))
+
+                # Apply 5-second fade in and fade out
+                # Make sure the segment is at least as long as the fades
+                f_in = min(fade_duration_ms, len(segment))
+                f_out = min(fade_duration_ms, len(segment))
+                segment = segment.fade_in(f_in).fade_out(f_out)
+
+                processed_tracks.append(segment)
             except Exception as e:
                 print(f"Error loading audio track {track.file_path}: {e}")
 
-        if len(backing_track) > 0:
-            # Adjust global backing track volume
-            # Convert percentage 0-1.0 to dB change. Pydub uses dB (10 * log10(linear_gain))
-            # 1.0 = 0dB change. 0.5 = -6dB. 0.0 = -inf (silence)
-            vol = max(0.01, project.backing_track_volume) # avoid log(0)
-            db_change = 20 * math.log10(vol)
-            backing_track = backing_track + db_change
+        if processed_tracks:
+            # Join tracks with silence gaps
+            for i, segment in enumerate(processed_tracks):
+                backing_track += segment
+                if i < len(processed_tracks) - 1:
+                    backing_track += silence_gap
 
-            # Loop backing track if shorter than video, with crossfade
-            crossfade_ms = 2000
-            current_backing = backing_track
+            if len(backing_track) > 0:
+                # Adjust global backing track volume
+                vol = max(0.01, project.backing_track_volume) # avoid log(0)
+                db_change = 20 * math.log10(vol)
+                backing_track = backing_track + db_change
 
-            while len(current_backing) < total_duration_ms + crossfade_ms:
-                current_backing = current_backing.append(backing_track, crossfade=crossfade_ms)
+                current_backing = backing_track
 
-            # Trim to exact length and apply fade out at the end
-            current_backing = current_backing[:total_duration_ms]
-            fade_out_ms = min(3000, total_duration_ms)
-            current_backing = current_backing.fade_out(fade_out_ms)
+                # Loop backing track if shorter than video and loop is enabled
+                if project.loop_backing_track:
+                    # Append until it covers the whole slideshow
+                    while len(current_backing) < total_duration_ms:
+                        # Append the gap, then the repeated backing track
+                        current_backing += silence_gap
+                        current_backing += backing_track
 
-            # Overlay backing track onto the silent mix
-            final_mix = final_mix.overlay(current_backing)
+                # Trim to exact length
+                current_backing = current_backing[:total_duration_ms]
+
+                # Apply a 5-second fade-out to the very end of the slideshow
+                fade_out_ms = min(5000, total_duration_ms)
+                current_backing = current_backing.fade_out(fade_out_ms)
+
+                # Overlay backing track onto the silent mix
+                final_mix = final_mix.overlay(current_backing)
 
     # 2. Mix in Video Audio
     current_time_ms = 0
