@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import ffmpeg
 import math
+import threading
 from typing import List, Tuple, Optional, Generator, Iterator
 from collections import deque
 from PIL import Image, ImageOps
@@ -61,12 +62,28 @@ class SlideshowRenderer:
                     width, height = height, width
 
             # Create an ffmpeg process to read frames sequentially
+            stderr_output = []
             process = (
                 ffmpeg
                 .input(path, ss=start_time, t=duration + 0.5)
                 .output('pipe:', format='rawvideo', pix_fmt='rgb24', r=self.fps)
                 .run_async(pipe_stdout=True, pipe_stderr=True)
             )
+
+            def read_stderr():
+                try:
+                    while True:
+                        chunk = process.stderr.read(4096)
+                        if not chunk:
+                            break
+                        stderr_output.append(chunk.decode(errors='replace'))
+                        if len(stderr_output) > 10:
+                            stderr_output.pop(0)
+                except Exception:
+                    pass
+
+            stderr_thread = threading.Thread(target=read_stderr, daemon=True)
+            stderr_thread.start()
 
             frame_size = width * height * 3
 
@@ -80,10 +97,15 @@ class SlideshowRenderer:
                 frames_yielded += 1
 
         except ffmpeg.Error as e:
-            err_msg = e.stderr.decode() if e.stderr else str(e)
-            print(f"Error decoding video {path}: {err_msg}")
+            if 'stderr_thread' in locals() and stderr_thread.is_alive():
+                stderr_thread.join(timeout=1.0)
+            err_str = "".join(stderr_output) if 'stderr_output' in locals() else ""
+            print(f"Error decoding video {path}: {err_str or str(e)}")
         except Exception as e:
-             print(f"Error decoding video {path}: {e}")
+             if 'stderr_thread' in locals() and stderr_thread.is_alive():
+                 stderr_thread.join(timeout=1.0)
+             err_str = "".join(stderr_output) if 'stderr_output' in locals() else ""
+             print(f"Error decoding video {path}: {e}\nFFmpeg output: {err_str[-500:]}")
         finally:
             if 'process' in locals():
                 try:
