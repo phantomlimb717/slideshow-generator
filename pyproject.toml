@@ -15,7 +15,9 @@ dependencies = [
     "pydub",
     "ffmpeg-python",
     "opencv-python",
-    "numpy"
+    "numpy",
+    "insightface>=0.7.3",
+    "onnxruntime-gpu>=1.17.0"
 ]
 
 [project.scripts]

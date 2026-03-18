@@ -55,6 +55,62 @@ from export.exporter import Exporter
 from ui.export_dialog import ExportProgressDialog, ExportSettingsDialog
 from models.serialization import save_project, load_project
 
+class FaceDetectionWorker(QThread):
+    """Background worker that detects faces in slides and updates focal points."""
+    slide_processed = Signal(int, float, float, float)  # index, focal_x, focal_y, zoom
+    progress_updated = Signal(int, int)                   # current, total
+    finished_all = Signal(int)                            # num_faces_found
+    error_occurred = Signal(str)
+
+    def __init__(self, slides: list, parent=None):
+        super().__init__(parent)
+        self.slides = slides  # list of (index, media_path) tuples
+        self._cancel = False
+
+    def cancel(self):
+        self._cancel = True
+
+    def run(self):
+        from utils.face_detection import detect_faces_in_image, calculate_smart_zoom
+        import time
+
+        faces_found = 0
+        total = len(self.slides)
+
+        # Emit a status message before the first possible model download
+        self.progress_updated.emit(0, total)
+
+        for i, (slide_idx, media_path) in enumerate(self.slides):
+            if self._cancel:
+                break
+
+            print(f"[{time.strftime('%H:%M:%S')}] [FaceDetect] Processing {i+1}/{total}: {os.path.basename(media_path)}")
+
+            faces = detect_faces_in_image(media_path)
+
+            # Filter out edge-touching faces
+            valid_faces = [f for f in faces if not f['edge_touching']]
+
+            if not valid_faces and faces:
+                # All faces touch edge — use them anyway but don't zoom
+                valid_faces = faces
+
+            if valid_faces:
+                # Use the largest face
+                best_face = valid_faces[0]
+                fx, fy = best_face['center']
+                zoom = calculate_smart_zoom(fx, fy, best_face['area'])
+
+                self.slide_processed.emit(slide_idx, fx, fy, zoom)
+                faces_found += 1
+                print(f"[{time.strftime('%H:%M:%S')}] [FaceDetect] Face found at ({fx:.2f}, {fy:.2f}), zoom={zoom:.2f}")
+            else:
+                print(f"[{time.strftime('%H:%M:%S')}] [FaceDetect] No faces found")
+
+            self.progress_updated.emit(i + 1, total)
+
+        self.finished_all.emit(faces_found)
+
 class ThumbnailWorker(QThread):
     thumbnail_ready = Signal(int, QImage, str) # index, qimage, target_list ('media' or 'timeline')
 
@@ -210,6 +266,7 @@ class MainWindow(QMainWindow):
         self.preview_generator = None
         self.thumbnail_worker = None
         self._old_thumbnail_workers = []
+        self.face_worker = None
 
         self.setup_ui()
         self.apply_dark_theme()
@@ -650,6 +707,10 @@ class MainWindow(QMainWindow):
 
         toolbar.addSeparator()
 
+        act_face_detect = QAction("Auto-Detect Faces", self)
+        act_face_detect.triggered.connect(self.run_face_detection)
+        toolbar.addAction(act_face_detect)
+
         act_prev = QAction("Generate Preview", self)
         act_prev.triggered.connect(self.trigger_preview_generation)
         toolbar.addAction(act_prev)
@@ -795,6 +856,58 @@ class MainWindow(QMainWindow):
             if index < self.timeline_list.count():
                 item = self.timeline_list.item(index)
                 item.setIcon(QIcon(pixmap))
+
+    # --- Face Detection Methods ---
+    def run_face_detection(self):
+        """Run face detection on all slides in the timeline."""
+        if not self.project.slides:
+            QMessageBox.warning(self, "No Slides", "Add slides to the timeline before running face detection.")
+            return
+
+        # Build list of (index, path) for image slides only
+        slides_to_process = []
+        for i, slide in enumerate(self.project.slides):
+            if slide.media_type in (MediaType.IMAGE, MediaType.LIVE_PHOTO):
+                slides_to_process.append((i, slide.media_path))
+
+        if not slides_to_process:
+            QMessageBox.information(self, "No Images", "Face detection only applies to image slides.")
+            return
+
+        self.statusBar().showMessage(f"Detecting faces in {len(slides_to_process)} images...")
+
+        self.face_worker = FaceDetectionWorker(slides_to_process, self)
+        self.face_worker.slide_processed.connect(self.on_face_detected)
+        self.face_worker.progress_updated.connect(self.on_face_progress)
+        self.face_worker.finished_all.connect(self.on_face_detection_complete)
+        self.face_worker.error_occurred.connect(lambda e: self.statusBar().showMessage(f"Face detection error: {e}"))
+        self.face_worker.start()
+
+    def on_face_detected(self, slide_idx: int, fx: float, fy: float, zoom: float):
+        """Called when a face is found in a slide — update the model."""
+        if slide_idx < len(self.project.slides):
+            slide = self.project.slides[slide_idx]
+            slide.focal_point = (round(fx, 2), round(fy, 2))
+            slide.start_zoom = round(zoom, 2)
+            self.is_dirty = True
+
+        # If this slide is currently selected in the inspector, refresh it
+        items = self.timeline_list.selectedItems()
+        if items:
+            selected_slide = items[0].data(Qt.UserRole)
+            if selected_slide is self.project.slides[slide_idx]:
+                self.update_inspector_state(selected_slide)
+
+    def on_face_progress(self, current: int, total: int):
+        if current == 0:
+            self.statusBar().showMessage("Loading face detection model (first run)...")
+        else:
+            self.statusBar().showMessage(f"Detecting faces... {current}/{total}")
+
+    def on_face_detection_complete(self, faces_found: int):
+        total = len(self.project.slides)
+        self.statusBar().showMessage(f"Face detection complete — found faces in {faces_found}/{total} slides")
+        self.refresh_timeline()
 
     # --- Context Menu Methods ---
     def show_timeline_context_menu(self, pos):
@@ -1413,6 +1526,11 @@ class MainWindow(QMainWindow):
         if self.preview_generator:
             self.preview_generator.cancel()
             self.preview_generator.cleanup()
+
+        if self.face_worker and self.face_worker.isRunning():
+            self.face_worker.cancel()
+            self.face_worker.wait()
+
         event.accept()
 
 if __name__ == "__main__":
