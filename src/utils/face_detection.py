@@ -114,38 +114,45 @@ def compare_faces(embedding1, embedding2) -> float:
     return float(np.dot(e1, e2))
 
 
-def calculate_smart_zoom(focal_x: float, focal_y: float, face_area: float, max_auto_zoom: float = 1.5) -> float:
+def calculate_smart_zoom(focal_x: float, focal_y: float, face_area: float, max_auto_zoom: float = 1.5,
+                         is_specific_person: bool = False) -> float:
     """
-    Calculate a zoom level that keeps the face well-framed without the crop
-    going off the edge of the image.
+    Calculate a zoom level that keeps the face well-framed.
 
     - focal_x, focal_y: normalized face center (0-1)
     - face_area: relative area of face vs image
     - max_auto_zoom: cap on automatic zoom
+    - is_specific_person: If true, uses a tighter, more aggressive zoom.
     """
-    # How far is the face from the nearest edge?
-    edge_margin_x = min(focal_x, 1.0 - focal_x)
-    edge_margin_y = min(focal_y, 1.0 - focal_y)
-    edge_margin = min(edge_margin_x, edge_margin_y)
+    # Override max_auto_zoom if it's a specific person we want to zero in on
+    if is_specific_person:
+        max_auto_zoom = max(max_auto_zoom, 3.0)
 
-    # Maximum zoom where the face stays centered without clamping
-    # At zoom z, visible window is 1/z of the image
-    # Edge of visible area is at focal ± 0.5/z
-    # To avoid clamping: 0.5/z <= edge_margin → z <= 0.5/edge_margin
-    if edge_margin > 0.01:
-        max_safe_zoom = 0.5 / edge_margin
-    else:
-        max_safe_zoom = 1.0
+    # Since the renderer clamps automatically, we don't need to force a minimum zoom.
+    # The previous logic was fundamentally flawed in its naming and purpose.
+    # We actually WANT the crop to be clamped if the user is on the edge, because
+    # zooming in 10x just to avoid clamping is ridiculous.
+    # What we actually need is just a cap to prevent insane zooming if the face is too close to the edge.
+    # So we simply use `max_auto_zoom` as our absolute cap.
 
-    # Start with a mild zoom based on face size
-    # Small face → zoom in more, large face → zoom less
-    if face_area > 0.1:
-        desired_zoom = 1.0      # Face is already big — don't zoom
-    elif face_area > 0.03:
-        desired_zoom = 1.2      # Medium face — slight zoom
+    # Start with a desired zoom based on face size
+    if is_specific_person:
+        # Tighter zoom: small face desires 2.5, medium 2.0, large 1.5
+        if face_area > 0.1:
+            desired_zoom = 1.5      # Face is already big
+        elif face_area > 0.03:
+            desired_zoom = 2.0      # Medium face
+        else:
+            desired_zoom = 2.5      # Small face
     else:
-        desired_zoom = 1.4      # Small face — zoom in to make it larger
+        # Standard conservative zoom
+        if face_area > 0.1:
+            desired_zoom = 1.0      # Face is already big — don't zoom
+        elif face_area > 0.03:
+            desired_zoom = 1.2      # Medium face — slight zoom
+        else:
+            desired_zoom = 1.4      # Small face — zoom in to make it larger
 
     # Clamp to the safe range
-    auto_zoom = min(desired_zoom, max_safe_zoom, max_auto_zoom)
+    auto_zoom = min(desired_zoom, max_auto_zoom)
     return max(1.0, auto_zoom)
