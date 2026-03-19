@@ -5,13 +5,13 @@ from PySide6.QtWidgets import (
     QToolBar, QSplitter, QLabel, QPushButton, QSlider, QComboBox,
     QSpinBox, QDoubleSpinBox, QCheckBox, QListWidget, QListWidgetItem,
     QFrame, QFileDialog, QMessageBox, QProgressDialog, QSizePolicy,
-    QStyledItemDelegate, QStyle, QMenu
+    QStyledItemDelegate, QStyle, QMenu, QDialog
 )
 from PySide6.QtCore import Qt, QSize, QUrl, QTimer, Signal, QThread, QEvent, QRect
 from PySide6.QtGui import QIcon, QAction, QPixmap, QImage, QPainter, QColor, QPalette
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtMultimediaWidgets import QVideoWidget
-from PIL import ImageQt
+from PIL import ImageQt, Image, ImageOps
 
 from models.project import Project, SlideItem, MediaType, EffectPreset, AudioItem
 
@@ -54,6 +54,270 @@ from rendering.preview import PreviewGenerator
 from export.exporter import Exporter
 from ui.export_dialog import ExportProgressDialog, ExportSettingsDialog
 from models.serialization import save_project, load_project
+
+class FacePickerDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Select Target Person")
+        self.setMinimumSize(800, 600)
+        self.selected_embedding = None
+        self.faces = []
+        self.selected_face_idx = None
+        self.image = None
+        self.scale = 1.0
+
+        layout = QVBoxLayout(self)
+
+        # Instructions
+        layout.addWidget(QLabel("Click on a face to select the person to track across all slides."))
+
+        # Source selection
+        source_layout = QHBoxLayout()
+        btn_from_timeline = QPushButton("Use Selected Timeline Slide")
+        btn_from_timeline.clicked.connect(self.load_from_timeline)
+        source_layout.addWidget(btn_from_timeline)
+
+        btn_from_file = QPushButton("Choose Image File...")
+        btn_from_file.clicked.connect(self.load_from_file)
+        source_layout.addWidget(btn_from_file)
+        layout.addLayout(source_layout)
+
+        # Image display area with clickable faces
+        self.image_label = QLabel("No image loaded")
+        self.image_label.setAlignment(Qt.AlignCenter)
+        self.image_label.setMinimumSize(700, 400)
+        self.image_label.setStyleSheet("background-color: #252526; border: 1px solid #3e3e42;")
+        self.image_label.mousePressEvent = self.on_image_click
+        layout.addWidget(self.image_label)
+
+        # Status
+        self.status_label = QLabel("")
+        layout.addWidget(self.status_label)
+
+        # Buttons
+        button_layout = QHBoxLayout()
+        self.btn_ok = QPushButton("OK — Use Selected Face")
+        self.btn_ok.setEnabled(False)
+        self.btn_ok.clicked.connect(self.accept)
+        button_layout.addWidget(self.btn_ok)
+
+        btn_cancel = QPushButton("Cancel")
+        btn_cancel.clicked.connect(self.reject)
+        button_layout.addWidget(btn_cancel)
+        layout.addLayout(button_layout)
+
+    def load_from_timeline(self):
+        """Load the currently selected timeline slide's image."""
+        parent = self.parent()
+        if parent:
+            items = parent.timeline_list.selectedItems()
+            if items:
+                slide = items[0].data(Qt.UserRole)
+                self._load_image(slide.media_path)
+            else:
+                QMessageBox.warning(self, "No Selection", "Select a slide in the timeline first.")
+
+    def load_from_file(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Choose Reference Image", "",
+            "Images (*.jpg *.jpeg *.png *.heic *.heif *.bmp *.webp)"
+        )
+        if path:
+            self._load_image(path)
+
+    def _load_image(self, image_path):
+        """Load image, detect faces, display with bounding boxes."""
+        from utils.face_detection import detect_faces_in_image
+
+        self.status_label.setText("Detecting faces...")
+        QApplication.processEvents()
+
+        self.faces = detect_faces_in_image(image_path, max_dimension=1200)
+
+        if not self.faces:
+            self.status_label.setText("No faces detected in this image. Try another.")
+            return
+
+        # Load and display the image with face bounding boxes
+        pil_img = Image.open(image_path)
+        pil_img = ImageOps.exif_transpose(pil_img)
+        pil_img = pil_img.convert('RGB')
+
+        self.orig_w, self.orig_h = pil_img.size
+
+        # Scale to fit the label
+        label_w = self.image_label.width() - 4
+        label_h = self.image_label.height() - 4
+        self.scale = min(label_w / self.orig_w, label_h / self.orig_h, 1.0)
+        display_w = int(self.orig_w * self.scale)
+        display_h = int(self.orig_h * self.scale)
+
+        pil_img = pil_img.resize((display_w, display_h), Image.LANCZOS)
+        self.image = pil_img.copy()
+
+        self.selected_face_idx = None
+        self.btn_ok.setEnabled(False)
+        self._redraw()
+
+        self.status_label.setText(f"Found {len(self.faces)} face(s). Click on a face to select it.")
+
+    def _redraw(self):
+        """Redraw the image with face bounding boxes."""
+        from PIL import ImageDraw
+
+        if self.image is None:
+            return
+
+        draw_img = self.image.copy()
+        draw = ImageDraw.Draw(draw_img)
+
+        for i, face in enumerate(self.faces):
+            x1, y1, x2, y2 = face['bbox']
+            # Scale bbox to display coordinates
+            dx1 = int(x1 * self.scale)
+            dy1 = int(y1 * self.scale)
+            dx2 = int(x2 * self.scale)
+            dy2 = int(y2 * self.scale)
+
+            if i == self.selected_face_idx:
+                # Selected face — thick green box
+                for offset in range(3):
+                    draw.rectangle([dx1-offset, dy1-offset, dx2+offset, dy2+offset], outline='#00ff00')
+            else:
+                # Unselected face — thin white box
+                draw.rectangle([dx1, dy1, dx2, dy2], outline='#ffffff', width=2)
+
+        # Convert to QPixmap for display
+        qimg = ImageQt.ImageQt(draw_img.convert("RGBA"))
+        pixmap = QPixmap.fromImage(QImage(qimg))
+        self.image_label.setPixmap(pixmap)
+
+    def on_image_click(self, event):
+        """Handle click on the image — check if a face was clicked."""
+        if not self.faces or self.image is None:
+            return
+
+        # Get click position relative to the image
+        # The pixmap is centered in the label
+        pixmap = self.image_label.pixmap()
+        if pixmap is None:
+            return
+
+        label_w = self.image_label.width()
+        label_h = self.image_label.height()
+        px_w = pixmap.width()
+        px_h = pixmap.height()
+
+        # Calculate offset (pixmap is centered in label)
+        offset_x = (label_w - px_w) // 2
+        offset_y = (label_h - px_h) // 2
+
+        click_x = event.pos().x() - offset_x
+        click_y = event.pos().y() - offset_y
+
+        if click_x < 0 or click_y < 0 or click_x >= px_w or click_y >= px_h:
+            return
+
+        # Check which face was clicked
+        for i, face in enumerate(self.faces):
+            x1, y1, x2, y2 = face['bbox']
+            dx1 = int(x1 * self.scale)
+            dy1 = int(y1 * self.scale)
+            dx2 = int(x2 * self.scale)
+            dy2 = int(y2 * self.scale)
+
+            # Expand hit area by 10px for easier clicking
+            if dx1-10 <= click_x <= dx2+10 and dy1-10 <= click_y <= dy2+10:
+                self.selected_face_idx = i
+                self.selected_embedding = face['embedding']
+                self.btn_ok.setEnabled(self.selected_embedding is not None)
+                self._redraw()
+                self.status_label.setText(f"Selected face {i+1} of {len(self.faces)}")
+                return
+
+        # Clicked outside any face
+        self.selected_face_idx = None
+        self.selected_embedding = None
+        self.btn_ok.setEnabled(False)
+        self._redraw()
+
+    def get_selected_embedding(self):
+        return self.selected_embedding
+
+class FaceMatchWorker(QThread):
+    """Background worker that matches a specific person across all slides."""
+    slide_processed = Signal(int, float, float, float)  # index, focal_x, focal_y, zoom
+    progress_updated = Signal(int, int)                   # current, total
+    finished_all = Signal(int, int)                        # matches_found, total_slides
+    error_occurred = Signal(str)
+
+    MATCH_THRESHOLD = 0.5  # cosine distance threshold — lower = stricter match
+
+    def __init__(self, slides: list, reference_embedding, parent=None):
+        super().__init__(parent)
+        self.slides = slides
+        self.reference_embedding = reference_embedding
+        self._cancel = False
+
+    def cancel(self):
+        self._cancel = True
+
+    def run(self):
+        from utils.face_detection import detect_faces_in_image, calculate_smart_zoom
+        import time
+        import numpy as np
+
+        matches_found = 0
+        total = len(self.slides)
+
+        self.progress_updated.emit(0, total)
+
+        # Normalize reference embedding
+        ref = np.array(self.reference_embedding)
+        ref = ref / np.linalg.norm(ref)
+
+        for i, (slide_idx, media_path) in enumerate(self.slides):
+            if self._cancel:
+                break
+
+            print(f"[{time.strftime('%H:%M:%S')}] [FaceMatch] Processing {i+1}/{total}: {os.path.basename(media_path)}")
+
+            faces = detect_faces_in_image(media_path)
+
+            best_match = None
+            best_similarity = -1
+
+            for face in faces:
+                if face['embedding'] is None:
+                    continue
+
+                # Compute cosine similarity
+                emb = np.array(face['embedding'])
+                emb = emb / np.linalg.norm(emb)
+                similarity = float(np.dot(ref, emb))
+
+                if similarity > best_similarity:
+                    best_similarity = similarity
+                    best_match = face
+
+            # Check if the best match exceeds our threshold
+            # Cosine similarity: 1.0 = identical, 0.0 = unrelated
+            # Typical threshold for same person: 0.4-0.6
+            if best_match and best_similarity > (1 - self.MATCH_THRESHOLD):
+                fx, fy = best_match['center']
+                zoom = calculate_smart_zoom(fx, fy, best_match['area'])
+
+                self.slide_processed.emit(slide_idx, fx, fy, zoom)
+                matches_found += 1
+                print(f"[{time.strftime('%H:%M:%S')}] [FaceMatch] MATCH (sim={best_similarity:.3f}) at ({fx:.2f}, {fy:.2f}), zoom={zoom:.2f}")
+            elif best_match:
+                print(f"[{time.strftime('%H:%M:%S')}] [FaceMatch] Best face sim={best_similarity:.3f} — below threshold, skipping")
+            else:
+                print(f"[{time.strftime('%H:%M:%S')}] [FaceMatch] No faces found")
+
+            self.progress_updated.emit(i + 1, total)
+
+        self.finished_all.emit(matches_found, total)
 
 class FaceDetectionWorker(QThread):
     """Background worker that detects faces in slides and updates focal points."""
@@ -267,6 +531,7 @@ class MainWindow(QMainWindow):
         self.thumbnail_worker = None
         self._old_thumbnail_workers = []
         self.face_worker = None
+        self.face_match_worker = None
 
         self.setup_ui()
         self.apply_dark_theme()
@@ -711,6 +976,10 @@ class MainWindow(QMainWindow):
         act_face_detect.triggered.connect(self.run_face_detection)
         toolbar.addAction(act_face_detect)
 
+        act_face_match = QAction("Match Specific Person", self)
+        act_face_match.triggered.connect(self.start_face_matching)
+        toolbar.addAction(act_face_match)
+
         act_prev = QAction("Generate Preview", self)
         act_prev.triggered.connect(self.trigger_preview_generation)
         toolbar.addAction(act_prev)
@@ -907,6 +1176,45 @@ class MainWindow(QMainWindow):
     def on_face_detection_complete(self, faces_found: int):
         total = len(self.project.slides)
         self.statusBar().showMessage(f"Face detection complete — found faces in {faces_found}/{total} slides")
+        self.refresh_timeline()
+
+    def start_face_matching(self):
+        """Show face picker dialog, then run matching across all slides."""
+        if not self.project.slides:
+            QMessageBox.warning(self, "No Slides", "Add slides to the timeline before matching faces.")
+            return
+
+        dialog = FacePickerDialog(self)
+        if dialog.exec() == QDialog.Accepted:
+            embedding = dialog.get_selected_embedding()
+            if embedding is None:
+                QMessageBox.warning(self, "No Face Selected", "No valid face embedding was captured.")
+                return
+
+            # Build list of image slides
+            slides_to_process = []
+            for i, slide in enumerate(self.project.slides):
+                if slide.media_type in (MediaType.IMAGE, MediaType.LIVE_PHOTO):
+                    slides_to_process.append((i, slide.media_path))
+
+            if not slides_to_process:
+                QMessageBox.information(self, "No Images", "Face matching only applies to image slides.")
+                return
+
+            self.statusBar().showMessage(f"Matching selected person across {len(slides_to_process)} images...")
+
+            self.face_match_worker = FaceMatchWorker(slides_to_process, embedding, self)
+            self.face_match_worker.slide_processed.connect(self.on_face_detected)  # Reuse same handler
+            self.face_match_worker.progress_updated.connect(self.on_face_match_progress)
+            self.face_match_worker.finished_all.connect(self.on_face_match_complete)
+            self.face_match_worker.error_occurred.connect(lambda e: self.statusBar().showMessage(f"Face matching error: {e}"))
+            self.face_match_worker.start()
+
+    def on_face_match_progress(self, current: int, total: int):
+        self.statusBar().showMessage(f"Matching person... {current}/{total}")
+
+    def on_face_match_complete(self, matches_found: int, total: int):
+        self.statusBar().showMessage(f"Face matching complete — found target person in {matches_found}/{total} slides")
         self.refresh_timeline()
 
     # --- Context Menu Methods ---
@@ -1530,6 +1838,10 @@ class MainWindow(QMainWindow):
         if self.face_worker and self.face_worker.isRunning():
             self.face_worker.cancel()
             self.face_worker.wait()
+
+        if self.face_match_worker and self.face_match_worker.isRunning():
+            self.face_match_worker.cancel()
+            self.face_match_worker.wait()
 
         event.accept()
 

@@ -102,6 +102,18 @@ def detect_faces_in_image(image_path: str, max_dimension: int = 800) -> List[dic
         return []
 
 
+def compare_faces(embedding1, embedding2) -> float:
+    """
+    Compare two face embeddings. Returns cosine similarity (0-1).
+    Higher = more similar. Same person typically > 0.5.
+    """
+    e1 = np.array(embedding1)
+    e2 = np.array(embedding2)
+    e1 = e1 / np.linalg.norm(e1)
+    e2 = e2 / np.linalg.norm(e2)
+    return float(np.dot(e1, e2))
+
+
 def calculate_smart_zoom(focal_x: float, focal_y: float, face_area: float, max_auto_zoom: float = 1.5) -> float:
     """
     Calculate a zoom level that keeps the face well-framed without the crop
