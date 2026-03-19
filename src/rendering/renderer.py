@@ -119,6 +119,31 @@ class SlideshowRenderer:
             yield np.zeros((self.resolution[1], self.resolution[0], 3), dtype=np.uint8)
             frames_yielded += 1
 
+    def _get_max_required_resolution(self, slide: SlideItem) -> Tuple[int, int]:
+        """Calculates the maximum pixel resolution required based on the most zoomed-in state."""
+        effect = slide.effect_preset
+        start_zoom = slide.start_zoom
+
+        # Max zoom is the minimum scaling factor we will hit (zoom > 1.0 means tighter crop)
+        # Determine the peak zoom level during the animation based on effect
+        max_zoom = start_zoom
+        if effect in [EffectPreset.ZOOM_IN, EffectPreset.ZOOM_IN_PAN]:
+            max_zoom = start_zoom * 1.3  # The most zoomed in it gets
+        elif effect == EffectPreset.ZOOM_OUT:
+            max_zoom = start_zoom * 1.2  # Starts zoomed in, zooms out to start_zoom
+
+        # For panning effects, we typically stay at 1.5 zoom or start_zoom
+        if effect in [EffectPreset.PAN_LEFT_RIGHT, EffectPreset.PAN_RIGHT_LEFT, EffectPreset.PAN_UP, EffectPreset.PAN_DOWN]:
+            max_zoom = max(1.5, start_zoom)
+
+        dst_w, dst_h = self.resolution
+
+        # To maintain 1:1 pixel mapping at the most zoomed-in point:
+        req_w = int(dst_w * max_zoom)
+        req_h = int(dst_h * max_zoom)
+
+        return req_w, req_h
+
     def _crop_to_aspect(self, img: np.ndarray, focal_x: float, focal_y: float) -> np.ndarray:
         """Crops an image to the target 16:9 aspect ratio based on focal point."""
         h, w = img.shape[:2]
@@ -263,8 +288,23 @@ class SlideshowRenderer:
         else:
             # Image handling
             raw_img = self._get_image_data(media_path)
-            print(f"[{time.strftime('%H:%M:%S')}] [Renderer] Image loaded: {raw_img.shape}")
+            orig_h, orig_w = raw_img.shape[:2]
+
+            # Optimization: Downscale massive images before applying expensive per-frame warp affine.
+            req_w, req_h = self._get_max_required_resolution(slide)
+
+            # We crop the original to the aspect ratio first, so we know its true dimensions
             cropped = self._crop_to_aspect(raw_img, slide.focal_point[0], slide.focal_point[1])
+            cropped_h, cropped_w = cropped.shape[:2]
+
+            # If the cropped image is significantly larger than the maximum required resolution,
+            # scale it down using an area-averaging filter to preserve detail and speed up frame generation.
+            # We add a small 5% buffer to avoid floating point boundary aliasing.
+            if cropped_w > req_w * 1.05 and cropped_h > req_h * 1.05:
+                print(f"[{time.strftime('%H:%M:%S')}] [Renderer] Image loaded: {orig_w}x{orig_h}. Pre-scaling cropped from {cropped_w}x{cropped_h} down to {req_w}x{req_h} to save processing time.")
+                cropped = cv2.resize(cropped, (req_w, req_h), interpolation=cv2.INTER_AREA)
+            else:
+                print(f"[{time.strftime('%H:%M:%S')}] [Renderer] Image loaded: {orig_w}x{orig_h} -> cropped {cropped_w}x{cropped_h}.")
 
             for i in range(num_frames):
                 elapsed = fade_in_duration + (i / self.fps)

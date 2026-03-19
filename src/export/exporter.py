@@ -9,6 +9,19 @@ from audio.mixer import build_audio_mix
 from models.project import Project
 import ffmpeg
 
+def check_nvenc_available() -> bool:
+    """Checks if h264_nvenc is available in the current ffmpeg installation."""
+    try:
+        result = subprocess.run(
+            ['ffmpeg', '-encoders'],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        return 'h264_nvenc' in result.stdout
+    except Exception:
+        return False
+
 class Exporter(QObject):
     progress_updated = Signal(int)
     export_complete = Signal(str)
@@ -63,10 +76,29 @@ class Exporter(QObject):
             # Use ffmpeg-python to create a subprocess for writing frames
             temp_video = os.path.join(self.temp_dir, "temp_video.mp4")
             stderr_output = []
+
+            use_nvenc = check_nvenc_available()
+            if use_nvenc:
+                print(f"[{time.strftime('%H:%M:%S')}] [Export] Using NVENC hardware acceleration.")
+                output_args = {
+                    'pix_fmt': 'yuv420p',
+                    'vcodec': 'h264_nvenc',
+                    'preset': 'p6',
+                    'cq': self.quality,
+                    'rc': 'vbr'
+                }
+            else:
+                output_args = {
+                    'pix_fmt': 'yuv420p',
+                    'vcodec': 'libx264',
+                    'preset': 'medium',
+                    'crf': self.quality
+                }
+
             process = (
                 ffmpeg
                 .input('pipe:', format='rawvideo', pix_fmt='rgb24', s=f'{self.resolution[0]}x{self.resolution[1]}', r=self.fps)
-                .output(temp_video, pix_fmt='yuv420p', vcodec='libx264', crf=self.quality, preset='medium')
+                .output(temp_video, **output_args)
                 .overwrite_output()
                 .run_async(pipe_stdin=True, pipe_stderr=True)
             )
