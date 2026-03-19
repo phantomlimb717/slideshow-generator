@@ -333,12 +333,16 @@ class SlideshowRenderer:
             fade_in = 0.0
             if i > 0:
                 fade_in = slide.transition_duration if slide.transition_duration is not None else self.project.global_transition_duration
+            else:
+                fade_in = self.project.global_transition_duration
 
             # Calculate outgoing transition duration for this slide
             fade_out = 0.0
             if i < len(self.project.slides) - 1:
                 next_slide = self.project.slides[i + 1]
                 fade_out = next_slide.transition_duration if next_slide.transition_duration is not None else self.project.global_transition_duration
+            else:
+                fade_out = self.project.global_transition_duration
 
             slide_frame_gen = self.generate_slide_frames(slide, fade_in_duration=fade_in, fade_out_duration=fade_out)
 
@@ -347,15 +351,20 @@ class SlideshowRenderer:
             if i > 0:
                 trans_dur = slide.transition_duration if slide.transition_duration is not None else self.project.global_transition_duration
                 trans_frames_count = int(trans_dur * self.fps)
-
-            # Make sure we don't request more transition frames than exist in the tail
-            trans_frames_count = min(trans_frames_count, len(prev_slide_tail))
+                # Make sure we don't request more transition frames than exist in the tail
+                trans_frames_count = min(trans_frames_count, len(prev_slide_tail))
+            else:
+                trans_dur = self.project.global_transition_duration
+                trans_frames_count = int(trans_dur * self.fps)
 
             # Determine outgoing transition frames count
             next_trans_frames_count = 0
             if i < len(self.project.slides) - 1:
                 next_slide = self.project.slides[i+1]
                 next_trans_dur = next_slide.transition_duration if next_slide.transition_duration is not None else self.project.global_transition_duration
+                next_trans_frames_count = int(next_trans_dur * self.fps)
+            else:
+                next_trans_dur = self.project.global_transition_duration
                 next_trans_frames_count = int(next_trans_dur * self.fps)
 
             # To avoid loading all frames, we still need to stream.
@@ -374,12 +383,21 @@ class SlideshowRenderer:
             for frame in slide_frame_gen:
                 if frames_yielded_this_slide < trans_frames_count:
                     # We are in the crossfade region with the previous slide
-                    alpha = (frames_yielded_this_slide + 1) / (trans_frames_count + 1)
-                    frame1 = prev_slide_tail[frames_yielded_this_slide]
-                    frame2 = frame
-                    blended = cv2.addWeighted(frame1, 1 - alpha, frame2, alpha, 0)
-                    yield current_frame_idx, total_frames, blended
-                    current_frame_idx += 1
+                    if i > 0:
+                        alpha = (frames_yielded_this_slide + 1) / (trans_frames_count + 1)
+                        frame1 = prev_slide_tail[frames_yielded_this_slide]
+                        frame2 = frame
+                        blended = cv2.addWeighted(frame1, 1 - alpha, frame2, alpha, 0)
+                        yield current_frame_idx, total_frames, blended
+                        current_frame_idx += 1
+                    else:
+                        # Fade in from black for the first slide
+                        alpha = (frames_yielded_this_slide + 1) / (trans_frames_count + 1)
+                        frame1 = np.zeros_like(frame)
+                        frame2 = frame
+                        blended = cv2.addWeighted(frame1, 1 - alpha, frame2, alpha, 0)
+                        yield current_frame_idx, total_frames, blended
+                        current_frame_idx += 1
                 else:
                     # We are past the incoming crossfade.
                     # This frame might be middle frame or outgoing tail.
@@ -401,8 +419,13 @@ class SlideshowRenderer:
             # If this is the last slide, we must also yield whatever is left in the tail,
             # because there will be no next slide to crossfade with.
             if i == len(self.project.slides) - 1:
-                for frame in new_tail:
-                    yield current_frame_idx, total_frames, frame
+                tail_len = len(new_tail)
+                for j, frame in enumerate(new_tail):
+                    # Fade out to black for the last slide
+                    alpha = 1.0 - ((j + 1) / (tail_len + 1))
+                    frame_black = np.zeros_like(frame)
+                    blended = cv2.addWeighted(frame, alpha, frame_black, 1 - alpha, 0)
+                    yield current_frame_idx, total_frames, blended
                     current_frame_idx += 1
             else:
                 # If the slide was shorter than expected (e.g. short video) and we didn't fill the tail,
