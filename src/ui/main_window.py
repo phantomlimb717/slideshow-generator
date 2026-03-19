@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QToolBar, QSplitter, QLabel, QPushButton, QSlider, QComboBox,
     QSpinBox, QDoubleSpinBox, QCheckBox, QListWidget, QListWidgetItem,
     QFrame, QFileDialog, QMessageBox, QProgressDialog, QSizePolicy,
-    QStyledItemDelegate, QStyle, QMenu, QDialog
+    QStyledItemDelegate, QStyle, QMenu, QDialog, QScrollArea
 )
 from PySide6.QtCore import Qt, QSize, QUrl, QTimer, Signal, QThread, QEvent, QRect
 from PySide6.QtGui import QIcon, QAction, QPixmap, QImage, QPainter, QColor, QPalette
@@ -59,17 +59,20 @@ class FacePickerDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Select Target Person")
-        self.setMinimumSize(800, 600)
-        self.selected_embedding = None
-        self.faces = []
-        self.selected_face_idx = None
-        self.image = None
+        self.setMinimumSize(850, 700)
+
+        self.reference_embeddings = []   # list of numpy arrays
+        self.ref_widgets = []            # list of QWidgets in the strip
+        self.faces = []                  # current image's detected faces
+        self.selected_face_idx = None    # currently highlighted face
+        self.image = None                # current PIL image (display-scaled)
+        self.orig_image = None           # current PIL image (original res, for cropping)
         self.scale = 1.0
 
         layout = QVBoxLayout(self)
 
         # Instructions
-        layout.addWidget(QLabel("Click on a face to select the person to track across all slides."))
+        layout.addWidget(QLabel("Select the same person at different ages/stages. Add 2-5 reference photos for best results."))
 
         # Source selection
         source_layout = QHBoxLayout()
@@ -85,10 +88,27 @@ class FacePickerDialog(QDialog):
         # Image display area with clickable faces
         self.image_label = QLabel("No image loaded")
         self.image_label.setAlignment(Qt.AlignCenter)
-        self.image_label.setMinimumSize(700, 400)
+        self.image_label.setMinimumSize(700, 350)
         self.image_label.setStyleSheet("background-color: #252526; border: 1px solid #3e3e42;")
         self.image_label.mousePressEvent = self.on_image_click
         layout.addWidget(self.image_label)
+
+        # Add Face Button
+        self.btn_add_face = QPushButton("Add This Face")
+        self.btn_add_face.setEnabled(False)
+        self.btn_add_face.clicked.connect(self.add_highlighted_face)
+        layout.addWidget(self.btn_add_face, alignment=Qt.AlignCenter)
+
+        # Reference Strip
+        layout.addWidget(QLabel("Selected References:"))
+        self.ref_scroll = QScrollArea()
+        self.ref_scroll.setFixedHeight(140)
+        self.ref_scroll.setWidgetResizable(True)
+        self.ref_strip_widget = QWidget()
+        self.ref_strip_layout = QHBoxLayout(self.ref_strip_widget)
+        self.ref_strip_layout.setAlignment(Qt.AlignLeft)
+        self.ref_scroll.setWidget(self.ref_strip_widget)
+        layout.addWidget(self.ref_scroll)
 
         # Status
         self.status_label = QLabel("")
@@ -96,10 +116,17 @@ class FacePickerDialog(QDialog):
 
         # Buttons
         button_layout = QHBoxLayout()
-        self.btn_ok = QPushButton("OK — Use Selected Face")
-        self.btn_ok.setEnabled(False)
-        self.btn_ok.clicked.connect(self.accept)
-        button_layout.addWidget(self.btn_ok)
+
+        btn_clear = QPushButton("Clear All")
+        btn_clear.clicked.connect(self.clear_all_references)
+        button_layout.addWidget(btn_clear)
+
+        button_layout.addStretch()
+
+        self.btn_done = QPushButton("Done — Match This Person")
+        self.btn_done.setEnabled(False)
+        self.btn_done.clicked.connect(self.accept)
+        button_layout.addWidget(self.btn_done)
 
         btn_cancel = QPushButton("Cancel")
         btn_cancel.clicked.connect(self.reject)
@@ -144,6 +171,7 @@ class FacePickerDialog(QDialog):
         pil_img = pil_img.convert('RGB')
 
         self.orig_w, self.orig_h = pil_img.size
+        self.orig_image = pil_img.copy()
 
         # Scale to fit the label
         label_w = self.image_label.width() - 4
@@ -152,14 +180,15 @@ class FacePickerDialog(QDialog):
         display_w = int(self.orig_w * self.scale)
         display_h = int(self.orig_h * self.scale)
 
+        # We need LANCZOS as requested
         pil_img = pil_img.resize((display_w, display_h), Image.LANCZOS)
         self.image = pil_img.copy()
 
         self.selected_face_idx = None
-        self.btn_ok.setEnabled(False)
+        self.btn_add_face.setEnabled(False)
         self._redraw()
 
-        self.status_label.setText(f"Found {len(self.faces)} face(s). Click on a face to select it.")
+        self.status_label.setText(f"Found {len(self.faces)} face(s). Click on a face to highlight it.")
 
     def _redraw(self):
         """Redraw the image with face bounding boxes."""
@@ -229,34 +258,136 @@ class FacePickerDialog(QDialog):
             # Expand hit area by 10px for easier clicking
             if dx1-10 <= click_x <= dx2+10 and dy1-10 <= click_y <= dy2+10:
                 self.selected_face_idx = i
-                self.selected_embedding = face['embedding']
-                self.btn_ok.setEnabled(self.selected_embedding is not None)
+                self.btn_add_face.setEnabled(face['embedding'] is not None)
                 self._redraw()
-                self.status_label.setText(f"Selected face {i+1} of {len(self.faces)}")
+                self.status_label.setText(f"Highlighted face {i+1} of {len(self.faces)}")
                 return
 
         # Clicked outside any face
         self.selected_face_idx = None
-        self.selected_embedding = None
-        self.btn_ok.setEnabled(False)
+        self.btn_add_face.setEnabled(False)
         self._redraw()
 
-    def get_selected_embedding(self):
-        return self.selected_embedding
+    def add_highlighted_face(self):
+        """Adds the highlighted face to the reference strip."""
+        if self.selected_face_idx is None or not self.faces or self.orig_image is None:
+            return
+
+        face = self.faces[self.selected_face_idx]
+        if face['embedding'] is None:
+            return
+
+        face_thumbnail_pil = self._crop_face_thumbnail(self.orig_image, face['bbox'])
+        self._add_reference(face['embedding'], face_thumbnail_pil)
+
+        self.btn_add_face.setEnabled(False)
+        self.status_label.setText(f"Added face to references.")
+
+    def _crop_face_thumbnail(self, pil_img, bbox, size=80):
+        """Crop a face from the image and resize to a square thumbnail."""
+        x1, y1, x2, y2 = bbox
+        # Add 20% padding around the face
+        w = x2 - x1
+        h = y2 - y1
+        pad_x = w * 0.2
+        pad_y = h * 0.2
+        x1 = max(0, int(x1 - pad_x))
+        y1 = max(0, int(y1 - pad_y))
+        x2 = min(pil_img.width, int(x2 + pad_x))
+        y2 = min(pil_img.height, int(y2 + pad_y))
+
+        face_crop = pil_img.crop((x1, y1, x2, y2))
+        face_crop = face_crop.resize((size, size), Image.LANCZOS)
+        return face_crop
+
+    def _add_reference(self, embedding, face_thumbnail_pil):
+        """Add a face reference to the collection."""
+        self.reference_embeddings.append(embedding)
+
+        # Create thumbnail widget
+        ref_widget = QWidget()
+        ref_layout = QVBoxLayout(ref_widget)
+        ref_layout.setContentsMargins(2, 2, 2, 2)
+        ref_layout.setSpacing(0)
+
+        # Face thumbnail
+        qimg = ImageQt.ImageQt(face_thumbnail_pil.convert("RGBA"))
+        pixmap = QPixmap.fromImage(QImage(qimg))
+        thumb_label = QLabel()
+        thumb_label.setPixmap(pixmap)
+        thumb_label.setFixedSize(80, 80)
+        ref_layout.addWidget(thumb_label)
+
+        # Remove button
+        idx = len(self.reference_embeddings) - 1
+        btn_remove = QPushButton("X")
+        btn_remove.setFixedSize(20, 20)
+        btn_remove.setStyleSheet("background-color: #cc0000; color: white; border: none; font-weight: bold;")
+        btn_remove.clicked.connect(lambda checked, w=ref_widget: self._remove_reference(w))
+        ref_layout.addWidget(btn_remove, alignment=Qt.AlignCenter)
+
+        # Label
+        ref_layout.addWidget(QLabel(f"Ref {idx + 1}"))
+
+        self.ref_strip_layout.addWidget(ref_widget)
+        self.ref_widgets.append(ref_widget)
+
+        self._update_done_button()
+
+    def _remove_reference(self, widget):
+        """Remove a reference widget and its embedding from the strip."""
+        if widget in self.ref_widgets:
+            index = self.ref_widgets.index(widget)
+            self.reference_embeddings.pop(index)
+            self.ref_widgets.pop(index)
+
+            self.ref_strip_layout.removeWidget(widget)
+            widget.deleteLater()
+
+            # Re-label remaining refs
+            for i, w in enumerate(self.ref_widgets):
+                labels = w.findChildren(QLabel)
+                for label in labels:
+                    if label.text().startswith("Ref"):
+                        label.setText(f"Ref {i + 1}")
+
+            self._update_done_button()
+
+    def clear_all_references(self):
+        """Clear all added references."""
+        for widget in self.ref_widgets:
+            self.ref_strip_layout.removeWidget(widget)
+            widget.deleteLater()
+
+        self.reference_embeddings.clear()
+        self.ref_widgets.clear()
+        self._update_done_button()
+
+    def _update_done_button(self):
+        count = len(self.reference_embeddings)
+        self.btn_done.setEnabled(count >= 1)
+        if count == 0:
+            self.btn_done.setText("Done — Match This Person")
+        else:
+            self.btn_done.setText(f"Done — Match Using {count} Reference(s)")
+
+    def get_selected_embeddings(self):
+        """Returns list of all reference embeddings."""
+        return self.reference_embeddings
 
 class FaceMatchWorker(QThread):
-    """Background worker that matches a specific person across all slides."""
+    """Background worker that matches a specific person across all slides using multiple references."""
     slide_processed = Signal(int, float, float, float)  # index, focal_x, focal_y, zoom
     progress_updated = Signal(int, int)                   # current, total
     finished_all = Signal(int, int)                        # matches_found, total_slides
     error_occurred = Signal(str)
 
-    MATCH_THRESHOLD = 0.5  # cosine distance threshold — lower = stricter match
+    MATCH_THRESHOLD = 0.35  # Lower threshold since cross-age matching is harder
 
-    def __init__(self, slides: list, reference_embedding, parent=None):
+    def __init__(self, slides: list, reference_embeddings: list, parent=None):
         super().__init__(parent)
         self.slides = slides
-        self.reference_embedding = reference_embedding
+        self.reference_embeddings = reference_embeddings  # list of numpy arrays
         self._cancel = False
 
     def cancel(self):
@@ -272,9 +403,13 @@ class FaceMatchWorker(QThread):
 
         self.progress_updated.emit(0, total)
 
-        # Normalize reference embedding
-        ref = np.array(self.reference_embedding)
-        ref = ref / np.linalg.norm(ref)
+        # Normalize all reference embeddings
+        refs = []
+        for emb in self.reference_embeddings:
+            e = np.array(emb)
+            refs.append(e / np.linalg.norm(e))
+
+        print(f"[{time.strftime('%H:%M:%S')}] [FaceMatch] Matching with {len(refs)} reference embedding(s), threshold={self.MATCH_THRESHOLD}")
 
         for i, (slide_idx, media_path) in enumerate(self.slides):
             if self._cancel:
@@ -284,34 +419,33 @@ class FaceMatchWorker(QThread):
 
             faces = detect_faces_in_image(media_path)
 
-            best_match = None
-            best_similarity = -1
+            best_match_face = None
+            best_overall_similarity = -1
 
             for face in faces:
                 if face['embedding'] is None:
                     continue
 
-                # Compute cosine similarity
                 emb = np.array(face['embedding'])
                 emb = emb / np.linalg.norm(emb)
-                similarity = float(np.dot(ref, emb))
 
-                if similarity > best_similarity:
-                    best_similarity = similarity
-                    best_match = face
+                # Compare against ALL references, take the best
+                for ref in refs:
+                    similarity = float(np.dot(ref, emb))
+                    if similarity > best_overall_similarity:
+                        best_overall_similarity = similarity
+                        best_match_face = face
 
-            # Check if the best match exceeds our threshold
-            # Cosine similarity: 1.0 = identical, 0.0 = unrelated
-            # Typical threshold for same person: 0.4-0.6
-            if best_match and best_similarity > (1 - self.MATCH_THRESHOLD):
-                fx, fy = best_match['center']
-                zoom = calculate_smart_zoom(fx, fy, best_match['area'])
+            # Accept if best similarity exceeds threshold
+            if best_match_face and best_overall_similarity > self.MATCH_THRESHOLD:
+                fx, fy = best_match_face['center']
+                zoom = calculate_smart_zoom(fx, fy, best_match_face['area'])
 
                 self.slide_processed.emit(slide_idx, fx, fy, zoom)
                 matches_found += 1
-                print(f"[{time.strftime('%H:%M:%S')}] [FaceMatch] MATCH (sim={best_similarity:.3f}) at ({fx:.2f}, {fy:.2f}), zoom={zoom:.2f}")
-            elif best_match:
-                print(f"[{time.strftime('%H:%M:%S')}] [FaceMatch] Best face sim={best_similarity:.3f} — below threshold, skipping")
+                print(f"[{time.strftime('%H:%M:%S')}] [FaceMatch] MATCH (sim={best_overall_similarity:.3f}) at ({fx:.2f}, {fy:.2f}), zoom={zoom:.2f}")
+            elif best_match_face:
+                print(f"[{time.strftime('%H:%M:%S')}] [FaceMatch] Best sim={best_overall_similarity:.3f} — below threshold")
             else:
                 print(f"[{time.strftime('%H:%M:%S')}] [FaceMatch] No faces found")
 
@@ -1186,9 +1320,9 @@ class MainWindow(QMainWindow):
 
         dialog = FacePickerDialog(self)
         if dialog.exec() == QDialog.Accepted:
-            embedding = dialog.get_selected_embedding()
-            if embedding is None:
-                QMessageBox.warning(self, "No Face Selected", "No valid face embedding was captured.")
+            embeddings = dialog.get_selected_embeddings()
+            if not embeddings:
+                QMessageBox.warning(self, "No Faces Selected", "No reference faces were captured.")
                 return
 
             # Build list of image slides
@@ -1201,20 +1335,26 @@ class MainWindow(QMainWindow):
                 QMessageBox.information(self, "No Images", "Face matching only applies to image slides.")
                 return
 
-            self.statusBar().showMessage(f"Matching selected person across {len(slides_to_process)} images...")
+            self.statusBar().showMessage(
+                f"Matching person ({len(embeddings)} refs) across {len(slides_to_process)} images..."
+            )
 
-            self.face_match_worker = FaceMatchWorker(slides_to_process, embedding, self)
-            self.face_match_worker.slide_processed.connect(self.on_face_detected)  # Reuse same handler
+            self.face_match_worker = FaceMatchWorker(slides_to_process, embeddings, self)
+            self.face_match_worker.slide_processed.connect(self.on_face_detected)  # Reuse Tier 1 handler
             self.face_match_worker.progress_updated.connect(self.on_face_match_progress)
             self.face_match_worker.finished_all.connect(self.on_face_match_complete)
-            self.face_match_worker.error_occurred.connect(lambda e: self.statusBar().showMessage(f"Face matching error: {e}"))
+            self.face_match_worker.error_occurred.connect(
+                lambda e: self.statusBar().showMessage(f"Face matching error: {e}")
+            )
             self.face_match_worker.start()
 
     def on_face_match_progress(self, current: int, total: int):
         self.statusBar().showMessage(f"Matching person... {current}/{total}")
 
     def on_face_match_complete(self, matches_found: int, total: int):
-        self.statusBar().showMessage(f"Face matching complete — found target person in {matches_found}/{total} slides")
+        self.statusBar().showMessage(
+            f"Face matching complete — found target person in {matches_found}/{total} slides"
+        )
         self.refresh_timeline()
 
     # --- Context Menu Methods ---
