@@ -440,7 +440,10 @@ class FaceMatchWorker(QThread):
             # Accept if best similarity exceeds threshold
             if best_match_face and best_overall_similarity > self.MATCH_THRESHOLD:
                 fx, fy = best_match_face['center']
-                zoom = calculate_smart_zoom(fx, fy, best_match_face['area'])
+                zoom = calculate_smart_zoom(
+                    fx, fy, best_match_face['area'],
+                    is_specific_person=True
+                )
 
                 self.slide_processed.emit(slide_idx, fx, fy, zoom)
                 matches_found += 1
