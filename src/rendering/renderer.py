@@ -175,20 +175,20 @@ class SlideshowRenderer:
             ox1, oy1, ox2, oy2 = 0.5, 0.5, 0.5, 0.5
         elif effect == EffectPreset.PAN_LEFT_RIGHT:
             z1, z2 = max(1.15, start_zoom), max(1.15, start_zoom)
-            ox1, oy1, ox2, oy2 = 0.42, 0.5, 0.58, 0.5
+            ox1, oy1, ox2, oy2 = 0.432, 0.5, 0.568, 0.5
         elif effect == EffectPreset.PAN_RIGHT_LEFT:
             z1, z2 = max(1.15, start_zoom), max(1.15, start_zoom)
-            ox1, oy1, ox2, oy2 = 0.58, 0.5, 0.42, 0.5
+            ox1, oy1, ox2, oy2 = 0.568, 0.5, 0.432, 0.5
         elif effect == EffectPreset.PAN_UP:
             z1, z2 = max(1.15, start_zoom), max(1.15, start_zoom)
-            ox1, oy1, ox2, oy2 = 0.5, 0.58, 0.5, 0.42
+            ox1, oy1, ox2, oy2 = 0.5, 0.568, 0.5, 0.432
         elif effect == EffectPreset.PAN_DOWN:
             z1, z2 = max(1.15, start_zoom), max(1.15, start_zoom)
-            ox1, oy1, ox2, oy2 = 0.5, 0.42, 0.5, 0.58
+            ox1, oy1, ox2, oy2 = 0.5, 0.432, 0.5, 0.568
         elif effect == EffectPreset.ZOOM_IN_PAN:
             z1 = start_zoom
             z2 = start_zoom * 1.3
-            ox1, oy1, ox2, oy2 = 0.42, 0.42, 0.58, 0.58
+            ox1, oy1, ox2, oy2 = 0.432, 0.432, 0.568, 0.568
         else:
             z1, z2 = start_zoom, start_zoom
             ox1, oy1, ox2, oy2 = 0.5, 0.5, 0.5, 0.5
