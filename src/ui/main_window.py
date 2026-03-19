@@ -738,6 +738,13 @@ class MainWindow(QMainWindow):
         self.video_widget = QVideoWidget()
         self.video_widget.setAspectRatioMode(Qt.AspectRatioMode.KeepAspectRatio)
         self.video_container = AspectRatioContainer(self.video_widget)
+
+        # We also need a label to show the static frame preview, overlapping the video widget
+        self.static_preview_label = QLabel(self.video_container)
+        self.static_preview_label.setAlignment(Qt.AlignCenter)
+        self.static_preview_label.setStyleSheet("background-color: black;")
+        self.static_preview_label.hide()
+
         preview_layout.addWidget(self.video_container)
 
         self.audio_output = QAudioOutput()
@@ -789,6 +796,7 @@ class MainWindow(QMainWindow):
 
         # Install event filter to keep overlay positioned and sized correctly
         preview_widget.installEventFilter(self)
+        self.video_container.installEventFilter(self)
 
         center_splitter.addWidget(preview_widget)
 
@@ -1063,6 +1071,9 @@ class MainWindow(QMainWindow):
             if event.type() == QEvent.Resize:
                 # Reposition the overlay to cover the video widget area
                 self.gen_overlay.setGeometry(self.video_container.geometry())
+        if hasattr(self, 'video_container') and source is self.video_container:
+            if event.type() == QEvent.Resize and hasattr(self, 'static_preview_label'):
+                self.static_preview_label.setGeometry(self.video_widget.geometry())
         return super().eventFilter(source, event)
 
     def _create_section_header(self, text):
@@ -1365,6 +1376,16 @@ class MainWindow(QMainWindow):
 
         menu = QMenu(self)
 
+        act_preview_frame = QAction("Preview Slide Starting Frame", self)
+        act_preview_frame.triggered.connect(lambda _, i=item: self.preview_slide_starting_frame(i))
+        menu.addAction(act_preview_frame)
+
+        act_preview_motion = QAction("Preview Slide Motion", self)
+        act_preview_motion.triggered.connect(lambda _, i=item: self.preview_slide_motion(i))
+        menu.addAction(act_preview_motion)
+
+        menu.addSeparator()
+
         act_send_front = QAction("Send to Front", self)
         act_send_front.triggered.connect(lambda _, i=item: self.move_slide_to_front(i))
         menu.addAction(act_send_front)
@@ -1380,6 +1401,116 @@ class MainWindow(QMainWindow):
         menu.addAction(act_delete)
 
         menu.exec(self.timeline_list.viewport().mapToGlobal(pos))
+
+    def preview_slide_starting_frame(self, item):
+        self.timeline_list.setCurrentItem(item)
+        self.trigger_preview_slide_starting_frame()
+
+    def preview_slide_motion(self, item):
+        self.timeline_list.setCurrentItem(item)
+        self.trigger_preview_slide_motion()
+
+    def trigger_preview_slide_motion(self):
+        import copy
+        import time
+
+        items = self.timeline_list.selectedItems()
+        if not items:
+            return
+
+        slide: SlideItem = items[0].data(Qt.UserRole)
+        print(f"[{time.strftime('%H:%M:%S')}] [UI] Motion Preview triggered for slide: {os.path.basename(slide.media_path)}")
+
+        # Create a temporary project with only this slide
+        temp_project = Project()
+        # Create a deep copy to not modify the original accidentally
+        temp_slide = copy.deepcopy(slide)
+
+        # Override crossfade to 0 so it just plays its standalone animation
+        temp_slide.transition_duration = 0.0
+        temp_project.global_transition_duration = 0.0
+        temp_project.slides = [temp_slide]
+
+        # Stop existing player
+        self.static_preview_label.hide()
+        self.video_widget.show()
+        self.media_player.stop()
+        self.media_player.setSource(QUrl())
+
+        self.btn_play_pause.setText("Play")
+        self.btn_play_pause.setEnabled(False)
+        self.scrubber.setEnabled(False)
+        self.gen_overlay.show()
+        self.gen_label.setText("Generating slide motion preview...")
+
+        if self.preview_generator:
+            self.preview_generator.cancel()
+
+        self.preview_generator = PreviewGenerator(temp_project)
+        self.preview_generator.preview_ready.connect(self.on_slide_motion_preview_ready)
+        self.preview_generator.error_occurred.connect(self.on_preview_error)
+        self.preview_generator.generate()
+
+    def on_slide_motion_preview_ready(self, video_path):
+        import time
+        print(f"[{time.strftime('%H:%M:%S')}] [UI] Motion Preview ready: {video_path}")
+        self.statusBar().showMessage(f"Motion Preview ready")
+        self.gen_overlay.hide()
+        self.gen_label.setText("Generating preview...") # reset
+        self.media_player.setSource(QUrl.fromLocalFile(video_path))
+        self.btn_play_pause.setEnabled(True)
+        self.scrubber.setEnabled(True)
+        self.media_player.play()
+        self.btn_play_pause.setText("Return to Full Preview")
+
+    def trigger_preview_slide_starting_frame(self):
+        items = self.timeline_list.selectedItems()
+        if not items:
+            return
+
+        slide: SlideItem = items[0].data(Qt.UserRole)
+
+        # We need to temporarily hide the video player and show the static label
+        self.media_player.stop()
+        self.video_widget.hide()
+        self.static_preview_label.show()
+
+        # We also want to update the label when the window is resized
+        # First let's render it
+        self.update_static_preview(slide)
+
+        # Show a cancel preview button if needed
+        self.btn_play_pause.setText("Return to Full Preview")
+        self.btn_play_pause.setEnabled(True)
+
+    def update_static_preview(self, slide: SlideItem):
+        from rendering.renderer import SlideshowRenderer
+        import cv2
+
+        # We'll use a fast temporary renderer just to grab the first frame
+        renderer = SlideshowRenderer(self.project, fps=30, resolution=(1920, 1080))
+
+        # We don't want to actually generate all frames, just grab the first one
+        # Use a fade_in_duration of 0 to get the exact starting frame
+        frame_gen = renderer.generate_slide_frames(slide, fade_in_duration=0.0, fade_out_duration=0.0)
+
+        try:
+            # Get the very first frame
+            frame = next(frame_gen)
+
+            # Convert BGR (or RGB) to QImage
+            # Our renderer outputs RGB based on its _get_image_data and ffmpeg format
+            h, w, ch = frame.shape
+            bytes_per_line = ch * w
+            qimg = QImage(frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
+            pixmap = QPixmap.fromImage(qimg)
+
+            # Scale it to fit the label
+            scaled_pixmap = pixmap.scaled(self.static_preview_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            self.static_preview_label.setPixmap(scaled_pixmap)
+
+        except StopIteration:
+            pass
 
     def move_slide_to_front(self, item):
         row = self.timeline_list.row(item)
@@ -1830,6 +1961,10 @@ class MainWindow(QMainWindow):
         import time
         print(f"[{time.strftime('%H:%M:%S')}] [UI] Preview generation triggered with {len(self.project.slides)} slides")
 
+        # Hide any static preview label
+        self.static_preview_label.hide()
+        self.video_widget.show()
+
         # Release the current preview file before generating a new one to prevent PermissionError on cleanup
         self.media_player.stop()
         self.media_player.setSource(QUrl())
@@ -1883,12 +2018,24 @@ class MainWindow(QMainWindow):
 
     # --- Player Controls ---
     def toggle_play_pause(self):
+        if self.btn_play_pause.text() == "Return to Full Preview":
+            self.cancel_single_slide_preview()
+            return
+
         if self.media_player.playbackState() == QMediaPlayer.PlayingState:
             self.media_player.pause()
             self.btn_play_pause.setText("Play")
         else:
             self.media_player.play()
             self.btn_play_pause.setText("Pause")
+
+    def cancel_single_slide_preview(self):
+        self.static_preview_label.hide()
+        self.video_widget.show()
+        self.media_player.stop()
+        self.media_player.setSource(QUrl())
+        self.btn_play_pause.setText("Play")
+        self.btn_play_pause.setEnabled(False)
 
     def update_duration(self, duration):
         self.scrubber.setRange(0, duration)
