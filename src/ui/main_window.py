@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QFrame, QFileDialog, QMessageBox, QProgressDialog, QSizePolicy,
     QStyledItemDelegate, QStyle, QMenu, QDialog, QScrollArea
 )
+from ui.scrubbable_spinbox import ScrubbableSpinBox, ScrubbableDoubleSpinBox
 from PySide6.QtCore import Qt, QSize, QUrl, QTimer, Signal, QThread, QEvent, QRect
 from PySide6.QtGui import QIcon, QAction, QPixmap, QImage, QPainter, QColor, QPalette
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
@@ -816,7 +817,7 @@ class MainWindow(QMainWindow):
         timeline_header.addStretch()
 
         timeline_header.addWidget(QLabel("Global Crossfade (s):"))
-        self.global_crossfade_spin = QDoubleSpinBox()
+        self.global_crossfade_spin = ScrubbableDoubleSpinBox()
         self.global_crossfade_spin.setRange(0.0, 10.0)
         self.global_crossfade_spin.setSingleStep(0.5)
         self.global_crossfade_spin.setValue(1.0)
@@ -918,7 +919,7 @@ class MainWindow(QMainWindow):
 
         zoom_layout = QHBoxLayout()
         zoom_layout.addWidget(QLabel("Starting Zoom:"))
-        self.zoom_spin = QDoubleSpinBox()
+        self.zoom_spin = ScrubbableDoubleSpinBox()
         self.zoom_spin.setRange(1.0, 3.0)
         self.zoom_spin.setSingleStep(0.1)
         self.zoom_spin.setValue(1.0)
@@ -928,13 +929,13 @@ class MainWindow(QMainWindow):
 
         slide_props_layout.addWidget(QLabel("Focal Point (X, Y):"))
         focal_layout = QHBoxLayout()
-        self.focal_x = QDoubleSpinBox()
+        self.focal_x = ScrubbableDoubleSpinBox()
         self.focal_x.setRange(0.0, 1.0)
         self.focal_x.setSingleStep(0.05)
         self.focal_x.setValue(0.5)
         self.focal_x.valueChanged.connect(self.inspector_changed)
         focal_layout.addWidget(self.focal_x)
-        self.focal_y = QDoubleSpinBox()
+        self.focal_y = ScrubbableDoubleSpinBox()
         self.focal_y.setRange(0.0, 1.0)
         self.focal_y.setSingleStep(0.05)
         self.focal_y.setValue(0.5)
@@ -946,7 +947,7 @@ class MainWindow(QMainWindow):
 
         dur_layout = QHBoxLayout()
         dur_layout.addWidget(QLabel("Duration (s):"))
-        self.duration_spin = QDoubleSpinBox()
+        self.duration_spin = ScrubbableDoubleSpinBox()
         self.duration_spin.setRange(1.0, 60.0)
         self.duration_spin.setSingleStep(0.5)
         self.duration_spin.setValue(5.0)
@@ -962,7 +963,7 @@ class MainWindow(QMainWindow):
 
         crossfade_layout = QHBoxLayout()
         crossfade_layout.addWidget(QLabel("Crossfade override (s):"))
-        self.crossfade_override = QDoubleSpinBox()
+        self.crossfade_override = ScrubbableDoubleSpinBox()
         self.crossfade_override.setRange(0.0, 10.0)
         self.crossfade_override.setSingleStep(0.5)
         self.crossfade_override.setValue(0.0)
@@ -988,7 +989,7 @@ class MainWindow(QMainWindow):
 
         trim_layout = QHBoxLayout()
         trim_layout.addWidget(QLabel("Trim Start (s):"))
-        self.trim_in_spin = QDoubleSpinBox()
+        self.trim_in_spin = ScrubbableDoubleSpinBox()
         self.trim_in_spin.setRange(0.0, 3600.0)
         self.trim_in_spin.setSingleStep(0.5)
         self.trim_in_spin.setValue(0.0)
@@ -1146,13 +1147,13 @@ class MainWindow(QMainWindow):
         QPushButton:pressed { background-color: #007acc; }
         QSlider::groove:horizontal { border: 1px solid #3e3e42; height: 8px; background: #2d2d30; margin: 2px 0; }
         QSlider::handle:horizontal { background: #007acc; width: 14px; margin: -4px 0; border-radius: 7px; }
-        QComboBox, QSpinBox, QDoubleSpinBox { background-color: #333337; border: 1px solid #3e3e42; color: white; padding: 2px; min-height: 24px; }
-        QSpinBox::up-button, QDoubleSpinBox::up-button { width: 20px; border-left: 1px solid #3e3e42; background-color: #3f3f46; }
-        QSpinBox::down-button, QDoubleSpinBox::down-button { width: 20px; border-left: 1px solid #3e3e42; background-color: #3f3f46; }
-        QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover { background-color: #4f4f56; }
-        QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover { background-color: #4f4f56; }
-        QSpinBox::up-arrow, QDoubleSpinBox::up-arrow { image: none; border-left: 4px solid transparent; border-right: 4px solid transparent; border-bottom: 5px solid #cccccc; width: 0; height: 0; }
-        QSpinBox::down-arrow, QDoubleSpinBox::down-arrow { image: none; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid #cccccc; width: 0; height: 0; }
+        QComboBox, QSpinBox, QDoubleSpinBox, ScrubbableSpinBox, ScrubbableDoubleSpinBox { background-color: #333337; border: 1px solid #3e3e42; color: white; padding: 2px; min-height: 24px; }
+        QSpinBox::up-button, QDoubleSpinBox::up-button, ScrubbableSpinBox::up-button, ScrubbableDoubleSpinBox::up-button { width: 20px; border-left: 1px solid #3e3e42; background-color: #3f3f46; }
+        QSpinBox::down-button, QDoubleSpinBox::down-button, ScrubbableSpinBox::down-button, ScrubbableDoubleSpinBox::down-button { width: 20px; border-left: 1px solid #3e3e42; background-color: #3f3f46; }
+        QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover, ScrubbableSpinBox::up-button:hover, ScrubbableDoubleSpinBox::up-button:hover { background-color: #4f4f56; }
+        QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover, ScrubbableSpinBox::down-button:hover, ScrubbableDoubleSpinBox::down-button:hover { background-color: #4f4f56; }
+        QSpinBox::up-arrow, QDoubleSpinBox::up-arrow, ScrubbableSpinBox::up-arrow, ScrubbableDoubleSpinBox::up-arrow { image: none; border-left: 4px solid transparent; border-right: 4px solid transparent; border-bottom: 5px solid #cccccc; width: 0; height: 0; }
+        QSpinBox::down-arrow, QDoubleSpinBox::down-arrow, ScrubbableSpinBox::down-arrow, ScrubbableDoubleSpinBox::down-arrow { image: none; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid #cccccc; width: 0; height: 0; }
         QToolBar { background-color: #2d2d30; border-bottom: 1px solid #1e1e1e; }
         QSplitter::handle { background-color: #3e3e42; }
         """
