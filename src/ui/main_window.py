@@ -48,7 +48,9 @@ class AspectRatioContainer(QWidget):
         # Center the child
         x = (w - child_w) // 2
         y = (h - child_h) // 2
-        self.child_widget.setGeometry(x, y, child_w, child_h)
+        for child in self.children():
+            if isinstance(child, QWidget) and child.isWidgetType():
+                child.setGeometry(x, y, child_w, child_h)
 
 from utils.media_import import scan_directory_for_media, extract_thumbnail
 from rendering.preview import PreviewGenerator
@@ -1076,9 +1078,6 @@ class MainWindow(QMainWindow):
             if event.type() == QEvent.Resize:
                 # Reposition the overlay to cover the video widget area
                 self.gen_overlay.setGeometry(self.video_container.geometry())
-        if hasattr(self, 'video_container') and source is self.video_container:
-            if event.type() == QEvent.Resize and hasattr(self, 'static_preview_label'):
-                self.static_preview_label.setGeometry(self.video_widget.geometry())
         return super().eventFilter(source, event)
 
     def _create_section_header(self, text):
