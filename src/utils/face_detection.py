@@ -125,11 +125,6 @@ def calculate_smart_zoom(focal_x: float, focal_y: float, face_area: float, max_a
     - max_auto_zoom: cap on automatic zoom
     - is_specific_person: If true, uses a tighter, more aggressive zoom.
     """
-    # Override max_auto_zoom if it's a specific person we want to zero in on
-    # We cap this to 2.0x for now to prevent over-zooming on matched persons.
-    if is_specific_person:
-        max_auto_zoom = max(max_auto_zoom, 2.0)
-
     # Since the renderer clamps automatically, we don't need to force a minimum zoom.
     # The previous logic was fundamentally flawed in its naming and purpose.
     # We actually WANT the crop to be clamped if the user is on the edge, because
@@ -158,8 +153,8 @@ def calculate_smart_zoom(focal_x: float, focal_y: float, face_area: float, max_a
         else:
             desired_zoom = 1.4      # Small face — zoom in to make it larger
 
-    # Ensure max_auto_zoom doesn't exceed 2.0 for any case as requested
-    max_auto_zoom = min(max_auto_zoom, 2.0)
+    # Ensure max_auto_zoom doesn't exceed 1.5 for any case as requested
+    max_auto_zoom = min(max_auto_zoom, 1.5)
 
     # Clamp to the safe range
     auto_zoom = min(desired_zoom, max_auto_zoom)
