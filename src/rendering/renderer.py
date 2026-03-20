@@ -187,36 +187,38 @@ class SlideshowRenderer:
         # Default full frame is zoom 1.0. A zoom > 1.0 means we see a smaller portion of the image.
 
         # Define effect parameters based on preset
+        fx, fy = slide.focal_point
+
         if effect == EffectPreset.STATIC:
             z1, z2 = start_zoom, start_zoom
-            ox1, oy1, ox2, oy2 = 0.5, 0.5, 0.5, 0.5
+            ox1, oy1, ox2, oy2 = fx, fy, fx, fy
         elif effect == EffectPreset.ZOOM_IN:
             z1 = start_zoom
             z2 = start_zoom * 1.2
-            ox1, oy1, ox2, oy2 = 0.5, 0.5, 0.5, 0.5
+            ox1, oy1, ox2, oy2 = fx, fy, fx, fy
         elif effect == EffectPreset.ZOOM_OUT:
             z1 = start_zoom * 1.2
             z2 = start_zoom
-            ox1, oy1, ox2, oy2 = 0.5, 0.5, 0.5, 0.5
+            ox1, oy1, ox2, oy2 = fx, fy, fx, fy
         elif effect == EffectPreset.PAN_LEFT_RIGHT:
             z1, z2 = max(1.15, start_zoom), max(1.15, start_zoom)
-            ox1, oy1, ox2, oy2 = 0.449, 0.5, 0.551, 0.5
+            ox1, oy1, ox2, oy2 = fx - 0.051, fy, fx + 0.051, fy
         elif effect == EffectPreset.PAN_RIGHT_LEFT:
             z1, z2 = max(1.15, start_zoom), max(1.15, start_zoom)
-            ox1, oy1, ox2, oy2 = 0.551, 0.5, 0.449, 0.5
+            ox1, oy1, ox2, oy2 = fx + 0.051, fy, fx - 0.051, fy
         elif effect == EffectPreset.PAN_UP:
             z1, z2 = max(1.15, start_zoom), max(1.15, start_zoom)
-            ox1, oy1, ox2, oy2 = 0.5, 0.551, 0.5, 0.449
+            ox1, oy1, ox2, oy2 = fx, fy + 0.051, fx, fy - 0.051
         elif effect == EffectPreset.PAN_DOWN:
             z1, z2 = max(1.15, start_zoom), max(1.15, start_zoom)
-            ox1, oy1, ox2, oy2 = 0.5, 0.449, 0.5, 0.551
+            ox1, oy1, ox2, oy2 = fx, fy - 0.051, fx, fy + 0.051
         elif effect == EffectPreset.ZOOM_IN_PAN:
             z1 = start_zoom
             z2 = start_zoom * 1.3
-            ox1, oy1, ox2, oy2 = 0.449, 0.449, 0.551, 0.551
+            ox1, oy1, ox2, oy2 = fx - 0.051, fy - 0.051, fx + 0.051, fy + 0.051
         else:
             z1, z2 = start_zoom, start_zoom
-            ox1, oy1, ox2, oy2 = 0.5, 0.5, 0.5, 0.5
+            ox1, oy1, ox2, oy2 = fx, fy, fx, fy
 
         # Interpolate using ease function
         eased_p = ease_in_out(progress)
