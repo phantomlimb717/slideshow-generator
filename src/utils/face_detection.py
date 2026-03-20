@@ -2,6 +2,7 @@ import numpy as np
 from PIL import Image, ImageOps
 from typing import Optional, Tuple, List
 import os
+import math
 import time
 
 # Lazy-load insightface to avoid slow import on startup
@@ -138,14 +139,16 @@ def calculate_smart_zoom(focal_x: float, focal_y: float, face_area: float, max_a
 
     # Start with a desired zoom based on face size
     if is_specific_person:
-        # Tighter zoom: small face desires 2.5, medium 2.0, large 1.5
-        # but will be capped by max_auto_zoom
-        if face_area > 0.1:
-            desired_zoom = 1.5      # Face is already big
-        elif face_area > 0.03:
-            desired_zoom = 2.0      # Medium face
-        else:
-            desired_zoom = 2.5      # Small face
+        # Mathematical zoom targeting a specific face area on screen (~10%)
+        # This provides a smooth, proportional zoom instead of rigid thresholds
+        target_face_area = 0.10
+
+        # Prevent division by zero if face_area is somehow 0
+        safe_face_area = max(face_area, 0.001)
+
+        # Calculate proportional zoom to make face ~10% of screen
+        # Since zoom scales both width and height, we use square root of area ratio
+        desired_zoom = math.sqrt(target_face_area / safe_face_area)
     else:
         # Standard conservative zoom
         if face_area > 0.1:
