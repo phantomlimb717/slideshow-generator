@@ -846,6 +846,7 @@ class MainWindow(QMainWindow):
         self.timeline_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.timeline_list.itemsDropped.connect(self.sync_timeline_order)
         self.timeline_list.itemSelectionChanged.connect(self.on_timeline_selection)
+        self.timeline_list.itemDoubleClicked.connect(self.preview_slide_starting_frame)
 
         # Context menu
         self.timeline_list.setContextMenuPolicy(Qt.CustomContextMenu)
