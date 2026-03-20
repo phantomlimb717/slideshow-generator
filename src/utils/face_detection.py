@@ -125,8 +125,9 @@ def calculate_smart_zoom(focal_x: float, focal_y: float, face_area: float, max_a
     - is_specific_person: If true, uses a tighter, more aggressive zoom.
     """
     # Override max_auto_zoom if it's a specific person we want to zero in on
+    # We cap this to 2.0x for now to prevent over-zooming on matched persons.
     if is_specific_person:
-        max_auto_zoom = max(max_auto_zoom, 3.0)
+        max_auto_zoom = max(max_auto_zoom, 2.0)
 
     # Since the renderer clamps automatically, we don't need to force a minimum zoom.
     # The previous logic was fundamentally flawed in its naming and purpose.
@@ -138,6 +139,7 @@ def calculate_smart_zoom(focal_x: float, focal_y: float, face_area: float, max_a
     # Start with a desired zoom based on face size
     if is_specific_person:
         # Tighter zoom: small face desires 2.5, medium 2.0, large 1.5
+        # but will be capped by max_auto_zoom
         if face_area > 0.1:
             desired_zoom = 1.5      # Face is already big
         elif face_area > 0.03:
@@ -152,6 +154,9 @@ def calculate_smart_zoom(focal_x: float, focal_y: float, face_area: float, max_a
             desired_zoom = 1.2      # Medium face — slight zoom
         else:
             desired_zoom = 1.4      # Small face — zoom in to make it larger
+
+    # Ensure max_auto_zoom doesn't exceed 2.0 for any case as requested
+    max_auto_zoom = min(max_auto_zoom, 2.0)
 
     # Clamp to the safe range
     auto_zoom = min(desired_zoom, max_auto_zoom)
