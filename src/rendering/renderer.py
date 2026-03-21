@@ -127,14 +127,14 @@ class SlideshowRenderer:
         # Max zoom is the minimum scaling factor we will hit (zoom > 1.0 means tighter crop)
         # Determine the peak zoom level during the animation based on effect
         max_zoom = start_zoom
-        if effect in [EffectPreset.ZOOM_IN, EffectPreset.ZOOM_IN_PAN]:
-            max_zoom = start_zoom * 1.3  # The most zoomed in it gets
-        elif effect == EffectPreset.ZOOM_OUT:
-            max_zoom = start_zoom * 1.2  # Starts zoomed in, zooms out to start_zoom
+        if effect == EffectPreset.ZOOM_IN_PAN:
+            max_zoom = start_zoom * 1.08
+        elif effect in [EffectPreset.ZOOM_IN, EffectPreset.ZOOM_OUT]:
+            max_zoom = start_zoom * 1.05  # The most zoomed in it gets
 
-        # For panning effects, we typically stay at 1.5 zoom or start_zoom
+        # For panning effects, we typically stay at 1.05 zoom or start_zoom
         if effect in [EffectPreset.PAN_LEFT_RIGHT, EffectPreset.PAN_RIGHT_LEFT, EffectPreset.PAN_UP, EffectPreset.PAN_DOWN]:
-            max_zoom = max(1.5, start_zoom)
+            max_zoom = max(1.05, start_zoom)
 
         dst_w, dst_h = self.resolution
 
@@ -194,28 +194,28 @@ class SlideshowRenderer:
             ox1, oy1, ox2, oy2 = fx, fy, fx, fy
         elif effect == EffectPreset.ZOOM_IN:
             z1 = start_zoom
-            z2 = start_zoom * 1.2
+            z2 = start_zoom * 1.05
             ox1, oy1, ox2, oy2 = fx, fy, fx, fy
         elif effect == EffectPreset.ZOOM_OUT:
-            z1 = start_zoom * 1.2
+            z1 = start_zoom * 1.05
             z2 = start_zoom
             ox1, oy1, ox2, oy2 = fx, fy, fx, fy
         elif effect == EffectPreset.PAN_LEFT_RIGHT:
-            z1, z2 = max(1.15, start_zoom), max(1.15, start_zoom)
-            ox1, oy1, ox2, oy2 = fx - 0.051, fy, fx + 0.051, fy
+            z1, z2 = max(1.05, start_zoom), max(1.05, start_zoom)
+            ox1, oy1, ox2, oy2 = fx - 0.02, fy, fx + 0.02, fy
         elif effect == EffectPreset.PAN_RIGHT_LEFT:
-            z1, z2 = max(1.15, start_zoom), max(1.15, start_zoom)
-            ox1, oy1, ox2, oy2 = fx + 0.051, fy, fx - 0.051, fy
+            z1, z2 = max(1.05, start_zoom), max(1.05, start_zoom)
+            ox1, oy1, ox2, oy2 = fx + 0.02, fy, fx - 0.02, fy
         elif effect == EffectPreset.PAN_UP:
-            z1, z2 = max(1.15, start_zoom), max(1.15, start_zoom)
-            ox1, oy1, ox2, oy2 = fx, fy + 0.051, fx, fy - 0.051
+            z1, z2 = max(1.05, start_zoom), max(1.05, start_zoom)
+            ox1, oy1, ox2, oy2 = fx, fy + 0.02, fx, fy - 0.02
         elif effect == EffectPreset.PAN_DOWN:
-            z1, z2 = max(1.15, start_zoom), max(1.15, start_zoom)
-            ox1, oy1, ox2, oy2 = fx, fy - 0.051, fx, fy + 0.051
+            z1, z2 = max(1.05, start_zoom), max(1.05, start_zoom)
+            ox1, oy1, ox2, oy2 = fx, fy - 0.02, fx, fy + 0.02
         elif effect == EffectPreset.ZOOM_IN_PAN:
             z1 = start_zoom
-            z2 = start_zoom * 1.3
-            ox1, oy1, ox2, oy2 = fx - 0.051, fy - 0.051, fx + 0.051, fy + 0.051
+            z2 = start_zoom * 1.08
+            ox1, oy1, ox2, oy2 = fx - 0.02, fy - 0.02, fx + 0.02, fy + 0.02
         else:
             z1, z2 = start_zoom, start_zoom
             ox1, oy1, ox2, oy2 = fx, fy, fx, fy
