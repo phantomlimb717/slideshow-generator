@@ -153,8 +153,8 @@ def calculate_smart_zoom(focal_x: float, focal_y: float, face_area: float, max_a
         else:
             desired_zoom = 1.4      # Small face — zoom in to make it larger
 
-    # Ensure max_auto_zoom doesn't exceed 1.25 for any case as requested
-    max_auto_zoom = min(max_auto_zoom, 1.25)
+    # Ensure max_auto_zoom doesn't exceed 1.18 for any case as requested
+    max_auto_zoom = min(max_auto_zoom, 1.18)
 
     # Clamp to the safe range
     auto_zoom = min(desired_zoom, max_auto_zoom)
